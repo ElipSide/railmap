@@ -1,0 +1,111 @@
+[webserver]
+port = ":8080"
+
+# ===== PROVIDERS =====
+[[providers]]
+name = "pg"
+type = "postgis"
+
+# важно: host/port/user/pass/db подставь как у тебя в docker
+# у тебя раньше работало вот так:
+uri = "postgres://osm:osm@postgis:5432/osm?sslmode=disable"
+
+# общий SRID проекта
+srid = 3857
+
+  # =========================
+  #  RAIL LINES (public.rail_lines)
+  #  geom column in DB: way (LineString,3857)
+  # =========================
+  [[providers.layers]]
+  name = "rail_lines"
+  geometry_type = "linestring"
+  sql = """
+    SELECT
+      ST_AsBinary(way) AS geom,
+      osm_id
+    FROM public.rail_lines
+    WHERE way && !BBOX!;
+  """
+
+  # =========================
+  #  RAIL STATIONS (public.rail_stations)
+  #  IMPORTANT:
+  #   - если в твоей таблице нет name, убери поле name из SELECT
+  #   - если геометрия не way, замени на реальную колонку
+  # =========================
+  [[providers.layers]]
+  name = "rail_stations"
+  geometry_type = "point"
+  sql = """
+    SELECT
+      ST_AsBinary(way) AS geom,
+      osm_id,
+      name
+    FROM public.rail_stations
+    WHERE way && !BBOX!;
+  """
+
+  # =========================
+  #  ELEVATORS (public.elevators)
+  #  Expected schema:
+  #   osm_id bigint, name text, geom geometry(Point,3857)
+  # =========================
+  [[providers.layers]]
+  name = "elevators"
+  geometry_type = "point"
+  sql = """
+    SELECT
+      ST_AsBinary(geom) AS geom,
+      osm_id,
+      name
+    FROM public.elevators
+    WHERE geom && !BBOX!;
+  """
+
+  # =========================
+  #  PORT TERMINALS (public.port_terminals)
+  #  Expected schema:
+  #   osm_id bigint, name text, kind text, geom geometry(Point,3857)
+  # =========================
+  [[providers.layers]]
+  name = "port_terminals"
+  geometry_type = "point"
+  sql = """
+    SELECT
+      ST_AsBinary(geom) AS geom,
+      osm_id,
+      name,
+      kind
+    FROM public.port_terminals
+    WHERE geom && !BBOX!;
+  """
+
+# ===== MAPS =====
+[[maps]]
+name = "rail"
+attribution = "© OpenStreetMap contributors"
+
+  [[maps.layers]]
+  name = "rail_lines"
+  provider_layer = "pg.rail_lines"
+  min_zoom = 4
+  max_zoom = 14
+
+  [[maps.layers]]
+  name = "rail_stations"
+  provider_layer = "pg.rail_stations"
+  min_zoom = 6
+  max_zoom = 14
+
+  [[maps.layers]]
+  name = "elevators"
+  provider_layer = "pg.elevators"
+  min_zoom = 6
+  max_zoom = 14
+
+  [[maps.layers]]
+  name = "port_terminals"
+  provider_layer = "pg.port_terminals"
+  min_zoom = 5
+  max_zoom = 14

@@ -1,0 +1,66 @@
+
+name: Map
+
+services:
+  postgis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    shm_size: "2gb"
+    environment:
+      POSTGRES_DB: osm
+      POSTGRES_USER: osm
+      POSTGRES_PASSWORD: osm
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+
+  route_api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    working_dir: /app
+    volumes:
+      - ./server:/app
+    command: ["bash", "-lc", "npm install && node route-server.js"]
+    depends_on:
+      - postgis
+    ports:
+      - "3000:3000"
+    environment:
+      PGHOST: ${PGHOST}
+      PGPORT: ${PGPORT}
+      PGDATABASE: ${PGDATABASE}
+      PGUSER: ${PGUSER}
+      PGPASSWORD: ${PGPASSWORD}
+
+      DECL_DB_HOST: ${DECL_DB_HOST}
+      DECL_DB_PORT: ${DECL_DB_PORT}
+      DECL_DB_NAME: ${DECL_DB_NAME}
+      DECL_DB_USER: ${DECL_DB_USER}
+      DECL_DB_PASSWORD: ${DECL_DB_PASSWORD}
+      DECL_DB_SSL: ${DECL_DB_SSL} 
+
+      PORT: 3000
+
+      NOTEBOOKLM_MODE: python
+      NOTEBOOKLM_NOTEBOOK_ID: 6c7dd140-b1ba-41e6-ab3c-49fd92b688b5
+      NOTEBOOKLM_SCRIPT_PATH: /app/ask_notebooklm.py
+      NOTEBOOKLM_STORAGE_PATH: /app/storage_state.json
+      PYTHON_BIN: /opt/venv/bin/python
+      NOTEBOOKLM_PYTHON_TIMEOUT_SEC: 120
+
+  tegola:
+    image: gospatial/tegola:latest
+    depends_on:
+      - postgis
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./tegola:/config:ro
+    command: ["serve", "--config", "/config/tegola.toml"]
+
+volumes:
+  postgis_data:
+  route_api_node_modules:

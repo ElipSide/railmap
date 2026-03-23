@@ -1,0 +1,140 @@
+###################################
+# 🔐 ENV / SECRETS
+###################################
+.env
+.env.*
+!.env.example
+
+###################################
+# 🐳 DOCKER
+###################################
+docker-compose.override.yml
+*.log
+docker-data/
+postgres-data/
+pgdata/
+
+###################################
+# 🗄️ DATABASE / DUMPS
+###################################
+*.dump
+*.sql
+*.backup
+*.bak
+
+###################################
+# 📦 NODE.JS (WEB)
+###################################
+node_modules/
+dist/
+build/
+.cache/
+.vite/
+coverage/
+
+# npm / yarn / pnpm logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+###################################
+# ⚛️ FRONTEND (VITE / REACT)
+###################################
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+###################################
+# 🐍 PYTHON (SERVER)
+###################################
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyc.*
+*.py,cover
+
+# virtual envs
+venv/
+.env_venv/
+.venv/
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+###################################
+# 📓 NOTEBOOK / ML
+###################################
+.ipynb_checkpoints/
+.notebooklm/
+storage_state/
+
+###################################
+# 🧪 TESTS / COVERAGE
+###################################
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+###################################
+# 🧰 IDE / EDITOR
+###################################
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+###################################
+# 🖥️ OS FILES
+###################################
+.DS_Store
+Thumbs.db
+desktop.ini
+
+###################################
+# 📂 BUILD / TEMP
+###################################
+tmp/
+temp/
+*.tmp
+*.pid
+
+###################################
+# 🗺️ TEGOLA CACHE (если появится)
+###################################
+cache/
+tiles/
+
+###################################
+# 🧾 LOGS
+###################################
+logs/
+*.log
+
+###################################
+# 🚀 OPTIONAL (если используешь)
+###################################
+# compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# archives
+*.zip
+*.tar
+*.gz
+
+
+# Node modules (везде)
+node_modules/
+
+# OSM файлы (в любом месте)
+*.osm.pbf
