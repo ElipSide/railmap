@@ -1,4 +1,3 @@
-
 name: Map
 
 services:
@@ -6,28 +5,40 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: ${POSTGIS_CONTAINER_NAME:-postgis}
     shm_size: "2gb"
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: osm
-      POSTGRES_USER: osm
-      POSTGRES_PASSWORD: osm
+      POSTGRES_DB: ${PGDATABASE}
+      POSTGRES_USER: ${PGUSER}
+      POSTGRES_PASSWORD: ${PGPASSWORD}
     ports:
-      - "5432:5432"
+      - "${POSTGIS_HOST_PORT:-5432}:5432"
     volumes:
       - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER} -d ${PGDATABASE}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
 
   route_api:
     build:
       context: ./server
       dockerfile: Dockerfile
+    container_name: ${ROUTE_API_CONTAINER_NAME:-route_api}
     working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      postgis:
+        condition: service_healthy
     volumes:
       - ./server:/app
+      - route_api_node_modules:/app/node_modules
     command: ["bash", "-lc", "npm install && node route-server.js"]
-    depends_on:
-      - postgis
     ports:
-      - "3000:3000"
+      - "${ROUTE_API_HOST_PORT:-3000}:3000"
     environment:
       PGHOST: ${PGHOST}
       PGPORT: ${PGPORT}
@@ -40,23 +51,26 @@ services:
       DECL_DB_NAME: ${DECL_DB_NAME}
       DECL_DB_USER: ${DECL_DB_USER}
       DECL_DB_PASSWORD: ${DECL_DB_PASSWORD}
-      DECL_DB_SSL: ${DECL_DB_SSL} 
+      DECL_DB_SSL: ${DECL_DB_SSL}
 
-      PORT: 3000
+      PORT: ${PORT:-3000}
 
-      NOTEBOOKLM_MODE: python
-      NOTEBOOKLM_NOTEBOOK_ID: 6c7dd140-b1ba-41e6-ab3c-49fd92b688b5
-      NOTEBOOKLM_SCRIPT_PATH: /app/ask_notebooklm.py
-      NOTEBOOKLM_STORAGE_PATH: /app/storage_state.json
-      PYTHON_BIN: /opt/venv/bin/python
-      NOTEBOOKLM_PYTHON_TIMEOUT_SEC: 120
+      NOTEBOOKLM_MODE: ${NOTEBOOKLM_MODE:-python}
+      NOTEBOOKLM_NOTEBOOK_ID: ${NOTEBOOKLM_NOTEBOOK_ID}
+      NOTEBOOKLM_SCRIPT_PATH: ${NOTEBOOKLM_SCRIPT_PATH:-/app/ask_notebooklm.py}
+      NOTEBOOKLM_STORAGE_PATH: ${NOTEBOOKLM_STORAGE_PATH:-/app/storage_state.json}
+      PYTHON_BIN: ${PYTHON_BIN:-/opt/venv/bin/python}
+      NOTEBOOKLM_PYTHON_TIMEOUT_SEC: ${NOTEBOOKLM_PYTHON_TIMEOUT_SEC:-120}
 
   tegola:
     image: gospatial/tegola:latest
+    container_name: ${TEGOLA_CONTAINER_NAME:-tegola}
+    restart: unless-stopped
     depends_on:
-      - postgis
+      postgis:
+        condition: service_healthy
     ports:
-      - "8080:8080"
+      - "${TEGOLA_HOST_PORT:-8080}:8080"
     volumes:
       - ./tegola:/config:ro
     command: ["serve", "--config", "/config/tegola.toml"]

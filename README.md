@@ -71,25 +71,30 @@ cd railmap
 Пример:
 
 ```env
-POSTGRES_DB=osm
-POSTGRES_USER=osm
-POSTGRES_PASSWORD=osm
+POSTGIS_CONTAINER_NAME=postgis
+ROUTE_API_CONTAINER_NAME=route_api
+TEGOLA_CONTAINER_NAME=tegola
+
 PGHOST=postgis
 PGPORT=5432
 PGDATABASE=osm
 PGUSER=osm
 PGPASSWORD=osm
 
-DECL_DB_HOST=
+DECL_DB_HOST =  
 DECL_DB_PORT=
 DECL_DB_NAME=
 DECL_DB_USER=
 DECL_DB_PASSWORD=
-DECL_DB_SSL=false
+DECL_DB_SSL="false"
 
+POSTGIS_HOST_PORT=5432
+ROUTE_API_HOST_PORT=3000
+TEGOLA_HOST_PORT=8080
 PORT=3000
+
 NOTEBOOKLM_MODE=python
-NOTEBOOKLM_NOTEBOOK_ID=
+NOTEBOOKLM_NOTEBOOK_ID=6c7dd140-b1ba-41e6-ab3c-49fd92b688b5
 NOTEBOOKLM_SCRIPT_PATH=/app/ask_notebooklm.py
 NOTEBOOKLM_STORAGE_PATH=/app/storage_state.json
 PYTHON_BIN=/opt/venv/bin/python
@@ -133,8 +138,8 @@ docker compose up -d postgis
 ### 2. Подключить расширения
 
 ```bash
-docker exec -it map-postgis-1 psql -U osm -d osm -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-docker exec -it map-postgis-1 psql -U osm -d osm -c "CREATE EXTENSION IF NOT EXISTS pgrouting;"
+docker exec -it postgis psql -U osm -d osm -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+docker exec -it postgis psql -U osm -d osm -c "CREATE EXTENSION IF NOT EXISTS pgrouting;"
 ```
 
 Если контейнер называется как в compose, обычно это будет что-то вроде `docker-postgis-1` или `<project>-postgis-1`.
@@ -144,8 +149,8 @@ docker exec -it map-postgis-1 psql -U osm -d osm -c "CREATE EXTENSION IF NOT EXI
 Если версия `pg_restore` внутри контейнера подходит к дампу:
 
 ```bash
-docker cp osm_working_full.dump map-postgis-1:/tmp/osm_working_full.dump
-docker exec -it map-postgis-1 pg_restore -U osm -d osm --clean --if-exists /tmp/osm_working_full.dump
+docker cp osm_working_full.dump postgis:/tmp/osm_working_full.dump
+docker exec -it postgis pg_restore -U osm -d osm --clean --if-exists /tmp/osm_working_full.dump
 ```
 
 Если версии PostgreSQL отличаются, удобнее восстановить дамп через временный контейнер той же или более новой версии:
@@ -156,19 +161,19 @@ docker run --rm \
   -e PGPASSWORD=osm \
   -v "$PWD:/work" \
   postgis/postgis:16-3.4 \
-  pg_restore -v -h map-postgis-1 -U osm -d osm --clean --if-exists /work/osm_working_full.dump
+  pg_restore -v -h postgis -U osm -d osm --clean --if-exists /work/osm_working_full.dump
 ```
 
 ### 4. Проверить, что таблицы загрузились
 
 ```bash
-docker exec -it map-postgis-1 psql -U osm -d osm -c "SELECT schemaname, tablename FROM pg_tables WHERE schemaname IN ('road','rail','public') ORDER BY schemaname, tablename;"
+docker exec -it postgis psql -U osm -d osm -c "SELECT schemaname, tablename FROM pg_tables WHERE schemaname IN ('road','rail','public') ORDER BY schemaname, tablename;"
 ```
 
 Проверка размера базы:
 
 ```bash
-docker exec -it map-postgis-1 psql -U osm -d osm -c "SELECT pg_size_pretty(pg_database_size('osm'));"
+docker exec -it postgis psql -U osm -d osm -c "SELECT pg_size_pretty(pg_database_size('osm'));"
 ```
 
 ---
@@ -239,7 +244,7 @@ docker compose down -v
 Зайти в базу:
 
 ```bash
-docker exec -it map-postgis-1 psql -U osm -d osm
+docker exec -it postgis psql -U osm -d osm
 ```
 
 ---
