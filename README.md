@@ -127,7 +127,8 @@ docker compose logs -f tegola
 
 ## Загрузка дампа базы данных
 
-Если у тебя уже есть готовый дамп, например `osm_working_full.dump`, восстановить его можно в запущенный контейнер PostGIS.
+Скачать файл `osm_working_full.dump` можно по [ссылке](https://mega.nz/file/amBCGBgB#jgDSSJWO9N6djhgnXsi809tHM1q8AvL7lEE-DeObQDY), восстановить его можно в запущенный контейнер PostGIS.
+
 
 ### 1. Убедиться, что PostGIS поднят
 
