@@ -70,6 +70,8 @@ pip-delete-this-directory.txt
 ###################################
 .ipynb_checkpoints/
 .notebooklm/
+**/storage_state.json
+storage_state.json
 storage_state/
 
 ###################################
