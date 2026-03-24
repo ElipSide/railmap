@@ -23,6 +23,8 @@ services:
       retries: 30
       start_period: 15s
 
+
+
   route_api:
     build:
       context: ./server
@@ -36,6 +38,7 @@ services:
     volumes:
       - ./server:/app
       - route_api_node_modules:/app/node_modules
+      # - /home/sammy/.notebooklm/storage_state.json:/app/.notebooklm/storage_state.json:ro
     command: ["bash", "-lc", "npm install && node route-server.js"]
     ports:
       - "${ROUTE_API_HOST_PORT:-3000}:3000"
@@ -58,7 +61,7 @@ services:
       NOTEBOOKLM_MODE: ${NOTEBOOKLM_MODE:-python}
       NOTEBOOKLM_NOTEBOOK_ID: ${NOTEBOOKLM_NOTEBOOK_ID}
       NOTEBOOKLM_SCRIPT_PATH: ${NOTEBOOKLM_SCRIPT_PATH:-/app/ask_notebooklm.py}
-      NOTEBOOKLM_STORAGE_PATH: ${NOTEBOOKLM_STORAGE_PATH:-/app/storage_state.json}
+      NOTEBOOKLM_STORAGE_PATH: /app/.notebooklm/storage_state.json
       PYTHON_BIN: ${PYTHON_BIN:-/opt/venv/bin/python}
       NOTEBOOKLM_PYTHON_TIMEOUT_SEC: ${NOTEBOOKLM_PYTHON_TIMEOUT_SEC:-120}
 
@@ -70,11 +73,28 @@ services:
       postgis:
         condition: service_healthy
     ports:
-      - "${TEGOLA_HOST_PORT:-8080}:8080"
+      - "${TEGOLA_HOST_PORT:-8085}:8080"
     volumes:
       - ./tegola:/config:ro
     command: ["serve", "--config", "/config/tegola.toml"]
-
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: ${WEB_CONTAINER_NAME:-web}
+    working_dir: /app
+    restart: unless-stopped
+    depends_on:
+      - route_api
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    command: ["bash", "-lc", "npm install && npm run dev -- --host 0.0.0.0 --port 5175"]
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "5175:5175"
 volumes:
   postgis_data:
   route_api_node_modules:
+  web_node_modules:

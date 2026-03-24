@@ -113,8 +113,35 @@ async def main():
         )
     except Exception as error:
         message = str(error)
+
         if "Run 'notebooklm login'" in message:
             message = f"{message} Copy or refresh storage_state.json, then try again."
+
+        unsupported_markers = [
+            "location=unsupported",
+            "CSRF token not found in HTML",
+            "Final URL: https://notebooklm.google?location=unsupported",
+        ]
+
+        if any(marker in message for marker in unsupported_markers):
+            emit_and_exit(
+                {
+                    "ok": True,
+                    "provider": "notebooklm-py",
+                    "notebook_id": notebook_id,
+                    "storage_path": storage_path or None,
+                    "answer": "",
+                    "conversation_id": None,
+                    "turn_number": None,
+                    "references": [],
+                    "raw_response": None,
+                    "warning": "NotebookLM unavailable on this server location",
+                    "warning_code": "NOTEBOOKLM_LOCATION_UNSUPPORTED",
+                    "warning_details": message,
+                },
+                code=0,
+                stream="stdout",
+            )
 
         emit_and_exit(
             {

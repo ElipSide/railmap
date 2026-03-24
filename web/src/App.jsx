@@ -144,19 +144,26 @@ export default function App() {
   const recommendationTransportModeRef = useRef(recommendationTransportMode);
   const productsRef = useRef(products);
 
-  const railTiles = useMemo(
-    () => "http://localhost:8080/maps/rail/{z}/{x}/{y}.pbf",
-    []
-  );
-  const routeApiBase = useMemo(() => {
-    if (typeof window !== "undefined") {
-      const { protocol, hostname, port } = window.location;
-      if (port === "5173" || port === "5174" || port === "4173") {
-        return `${protocol}//${hostname}:3000`;
-      }
+  
+const isRailmapSubpath = import.meta.env.VITE_USE_RAILMAP_SUBPATH === "1";
+
+const railTiles = useMemo(() => {
+  if (typeof window !== "undefined") {
+    if (isRailmapSubpath) {
+      return `${window.location.origin}/railmap/maps/rail/{z}/{x}/{y}.pbf`;
     }
-    return "";
-  }, []);
+    const { protocol, hostname } = window.location;
+    return `${protocol}//${hostname}:8085/maps/rail/{z}/{x}/{y}.pbf`;
+  }
+
+  return isRailmapSubpath
+    ? "https://csort-news.ru/railmap/maps/rail/{z}/{x}/{y}.pbf"
+    : "http://localhost:8085/maps/rail/{z}/{x}/{y}.pbf";
+}, [isRailmapSubpath]);
+
+const routeApiBase = useMemo(() => {
+  return isRailmapSubpath ? "/railmap" : "";
+}, [isRailmapSubpath]);
 
   const activeSupplyMessages =
     SEARCH_MESSAGES_BY_MODE[supplyTransportMode] ||
