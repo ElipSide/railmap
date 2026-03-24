@@ -2,6 +2,18 @@
 
 Веб-приложение для подбора и визуализации логистических маршрутов на базе PostGIS, Node.js API, Tegola и React/Vite.
 
+---
+
+## Технологии проекта
+
+- **Карты:** OpenStreetMap, MapLibre, Tegola
+- **Геоданные:** PostgreSQL, PostGIS
+- **Фронтенд:** React, Vite, JavaScript (JSX)
+- **Бэкенд:** Node.js, JavaScript
+- **Контейнеризация:** Docker, Docker Compose
+
+---
+
 ### NotebookLM
 Функция "Рыночные рекомендации" работать не будет, так как опирается на уникальный блокнот NotebookLM, можете собрать свой блокнот включив в него аграрные новости за некоторый период
 
@@ -629,15 +641,7 @@ volumes:
 - добавить отдельный документ по обновлению БД и деклараций
 - добавить healthchecks для всех сервисов
 
----
 
-## Технологии проекта
-
-- **Карты:** OpenStreetMap, MapLibre, Tegola
-- **Геоданные:** PostgreSQL, PostGIS
-- **Фронтенд:** React, Vite, JavaScript (JSX)
-- **Бэкенд:** Node.js, JavaScript
-- **Контейнеризация:** Docker, Docker Compose
 
 ---
 
