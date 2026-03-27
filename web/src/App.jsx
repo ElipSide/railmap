@@ -449,7 +449,11 @@ const routeApiBase = useMemo(() => {
             type: "line",
             source: "rail",
             "source-layer": "rail_lines",
-            layout: { "line-join": "round", "line-cap": "round" },
+            layout: {
+              "line-join": "round",
+              "line-cap": "round",
+              visibility: "none",
+            },
             paint: {
               "line-color": "#6a4a00",
               "line-width": ["interpolate", ["linear"], ["zoom"], 4, 2.0, 8, 4.0, 12, 7.5, 14, 11.0],
@@ -461,7 +465,11 @@ const routeApiBase = useMemo(() => {
             type: "line",
             source: "rail",
             "source-layer": "rail_lines",
-            layout: { "line-join": "round", "line-cap": "round" },
+            layout: {
+              "line-join": "round",
+              "line-cap": "round",
+              visibility: "none",
+            },
             paint: {
               "line-color": "#9a6a00",
               "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.6, 8, 3.2, 12, 6.0, 14, 9.0],
@@ -473,7 +481,11 @@ const routeApiBase = useMemo(() => {
             type: "line",
             source: "rail",
             "source-layer": "rail_lines",
-            layout: { "line-join": "round", "line-cap": "round" },
+            layout: {
+              "line-join": "round",
+              "line-cap": "round",
+              visibility: "none",
+            },
             paint: {
               "line-color": "#ffd400",
               "line-width": ["interpolate", ["linear"], ["zoom"], 4, 1.1, 8, 2.4, 12, 4.8, 14, 7.2],
@@ -485,6 +497,10 @@ const routeApiBase = useMemo(() => {
             type: "circle",
             source: "rail",
             "source-layer": "rail_stations",
+            layout: {
+              visibility: "none",
+            },
+            
             paint: {
               "circle-radius": [
                 "interpolate",
@@ -552,6 +568,8 @@ const routeApiBase = useMemo(() => {
               "text-anchor": "top",
               "text-optional": true,
               "text-allow-overlap": false,
+                  visibility: "none",
+
             },
             paint: {
               "text-color": "#101010",
@@ -1282,7 +1300,7 @@ const routeApiBase = useMemo(() => {
         !isBuildingDeclarationRouteRef.current
       ) {
         await handleDeclarationDestinationClick({
-          type: "station",
+          type: "point",
           name: `Точка ${round2(e.lngLat.lng)}, ${round2(e.lngLat.lat)}`,
           lon: e.lngLat.lng,
           lat: e.lngLat.lat,
@@ -1589,8 +1607,6 @@ const routeApiBase = useMemo(() => {
       lat: declaration.lat,
     },
     destination,
-    route_preference: "multimodal",
-    transport_mode: "multimodal",
   };
 
   const controller = new AbortController();
@@ -1612,7 +1628,7 @@ const routeApiBase = useMemo(() => {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new Error(data?.error || "route not found");
+      throw new Error(data?.error || `route api ${response.status}: ${response.statusText}`);
     }
 
     setDeclarationRouteResult(data);
@@ -2140,6 +2156,21 @@ const routeApiBase = useMemo(() => {
     setStatus(`режим маршрута для рекомендаций: ${nextMode}`);
   }
 
+  const activeDeclarationQuickRange = React.useMemo(() => {
+    const end = todayIso();
+
+    if (declarationDateTo !== end) return null;
+
+    for (const days of [0, 7, 30, 60]) {
+      if (declarationDateFrom === shiftDateIso(end, -days)) {
+        return days;
+      }
+    }
+
+    return null;
+  }, [declarationDateFrom, declarationDateTo]);
+
+
   return (
     <div style={{ position: "relative", height: "100vh", width: "100vw" }}>
       <div ref={mapContainerRef} style={{ position: "absolute", inset: 0 }} />
@@ -2203,6 +2234,8 @@ const routeApiBase = useMemo(() => {
         onNeedVolumeChange={handleNeedChange}
         declarationDateFrom={declarationDateFrom}
         declarationDateTo={declarationDateTo}
+        activeDeclarationQuickRange={activeDeclarationQuickRange}
+
         onDeclarationDateFromChange={setDeclarationDateFrom}
         onDeclarationDateToChange={setDeclarationDateTo}
         onApplyDeclarationQuickRange={applyDeclarationQuickRange}

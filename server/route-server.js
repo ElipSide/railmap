@@ -1784,10 +1784,15 @@ function formatTons(value) {
 
 function normalizeMapPointType(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "station" || normalized === "port" || normalized === "elevator") {
+  if (
+    normalized === "station" ||
+    normalized === "port" ||
+    normalized === "elevator" ||
+    normalized === "point"
+  ) {
     return normalized;
   }
-  return "station";
+  return "point";
 }
 
 function normalizeMapPointInput(raw) {
@@ -2905,8 +2910,13 @@ app.post("/api/declarations/route", async (req, res) => {
       { lon: destination.lon, lat: destination.lat }
     );
 
-    const routePreference = requestedPreference || ROUTE_PREF_MULTIMODAL;
+    const routePreference =
+      requestedPreference ||
+      (straightDistanceKm <= DECLARATION_MULTIMODAL_MIN_KM
+        ? ROUTE_PREF_ROAD
+        : ROUTE_PREF_MULTIMODAL);
 
+        
     const nearestStationCache = new Map();
     const nearestRoadNodeCache = new Map();
     const stationRoadNodeCache = new Map();
@@ -2951,10 +2961,20 @@ app.post("/api/declarations/route", async (req, res) => {
         ? await buildRoadRouteFromNodeToSnap(railPool, Number(destinationStationRoadNode.id), destinationRoadSnap, { allowWideSearch: true })
         : null;
 
+      const autoDecisionRule = requestedPreference
+        ? `forced:${requestedPreference}`
+        : `auto:${DECLARATION_MULTIMODAL_MIN_KM}km`;
+      const routeErrorText =
+        routePreference === ROUTE_PREF_ROAD
+          ? "road route not found"
+          : routePreference === ROUTE_PREF_MULTIMODAL
+            ? "multimodal route not found"
+            : "route not found";
+
       res.status(404).json({
-        error: "multimodal route not found",
+        error: routeErrorText,
         route_preference_used: routePreference,
-        decision_rule: "strict_multimodal_only",
+        decision_rule: autoDecisionRule,
         debug: {
           straight_distance_km: straightDistanceKm,
           origin_point: originPoint,
@@ -3034,14 +3054,18 @@ app.post("/api/declarations/route", async (req, res) => {
       }),
     ].filter(Boolean);
 
+    const autoDecisionRule = requestedPreference
+      ? `forced:${requestedPreference}`
+      : `auto:${DECLARATION_MULTIMODAL_MIN_KM}km`;
+
     res.json({
       ok: true,
       declaration,
       destination: destinationPointForFeature,
       straight_distance_km: straightDistanceKm,
-      decision_rule: "strict_multimodal_only",
+      decision_rule: autoDecisionRule,
       route_preference_used: routePreference,
-      rail_enforced_from_distance: true,
+      rail_enforced_from_distance: !requestedPreference && routePreference === ROUTE_PREF_MULTIMODAL,
       origin_station: route.origin_station,
       destination_station: route.destination_station,
       route,
