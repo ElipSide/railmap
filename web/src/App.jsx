@@ -7,6 +7,7 @@ import LoadingOverlay from "./components/LoadingOverlay";
 import RouteInfoPanel from "./components/RouteInfoPanel";
 import SupplyResultsPanel from "./components/SupplyResultsPanel";
 import RecommendationResultsPanel from "./components/RecommendationResultsPanel";
+import DeclarationResultsPanel from "./components/DeclarationResultsPanel";
 
 import { formatNum, formatTons, escapeHtml } from "./lib/format";
 import { applyVisibility, clearHoverState, clearRoute } from "./lib/mapHelpers";
@@ -19,6 +20,7 @@ import {
 } from "./lib/api";
 
 const DEFAULT_PRODUCT = "Пшеница";
+const MODE_DECLARATIONS = "declarations";
 const MODE_STATION_ROUTE = "station-route";
 const MODE_PRODUCT_SEARCH = "product-search";
 const MODE_MARKET_RECOMMENDATIONS = "market-recommendations";
@@ -58,6 +60,18 @@ const RECOMMENDATION_MESSAGES = [
   "Собираем лучшие варианты продажи, покупки или трейдинга…",
 ];
 
+const DECLARATION_SEARCH_MESSAGES = [
+  "Ищем декларации по выбранным фильтрам…",
+  "Готовим точки и кластеризацию для карты…",
+  "Обновляем список найденных деклараций…",
+];
+
+const DECLARATION_ROUTE_MESSAGES = [
+  "Определяем ближайшие ж/д станции…",
+  "Строим авто- и железнодорожные плечи…",
+  "Рисуем маршрут от декларации до выбранной точки…",
+];
+
 const NOTEBOOK_QUERY_MESSAGES = [
   "Готовим запрос к NotebookLM…",
   "Отправляем prompt в notebooklm-py…",
@@ -86,25 +100,40 @@ export default function App() {
   const supplyAbortRef = useRef(null);
   const recommendationAbortRef = useRef(null);
   const notebookLmAbortRef = useRef(null);
+  const declarationAbortRef = useRef(null);
+  const declarationRouteAbortRef = useRef(null);
 
   const [status, setStatus] = useState("init");
   const [ready, setReady] = useState(false);
-  const [activeMode, setActiveMode] = useState(MODE_STATION_ROUTE);
+  const [activeMode, setActiveMode] = useState(MODE_DECLARATIONS);
 
-  const [showLines, setShowLines] = useState(true);
-  const [showStations, setShowStations] = useState(true);
-  const [showPorts, setShowPorts] = useState(true);
-  const [showElevators, setShowElevators] = useState(true);
+  const [showLines, setShowLines] = useState(false);
+  const [showStations, setShowStations] = useState(false);
+  const [showPorts, setShowPorts] = useState(false);
+  const [showElevators, setShowElevators] = useState(false);
 
   const [routeInfo, setRouteInfo] = useState(null);
 
   const [products, setProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(DEFAULT_PRODUCT);
   const [needVolumeTons, setNeedVolumeTons] = useState("100");
+
+  const [declarationDateFrom, setDeclarationDateFrom] = useState(() =>
+    shiftDateIso(todayIso(), -7)
+  );
+  const [declarationDateTo, setDeclarationDateTo] = useState(() => todayIso());
+  const [declarationResult, setDeclarationResult] = useState(null);
+  const [selectedDeclarationId, setSelectedDeclarationId] = useState(null);
+  const [declarationRouteResult, setDeclarationRouteResult] = useState(null);
+  const [pickDeclarationDestinationMode, setPickDeclarationDestinationMode] =
+    useState(false);
+  const [isSearchingDeclarations, setIsSearchingDeclarations] = useState(false);
+  const [isBuildingDeclarationRoute, setIsBuildingDeclarationRoute] =
+    useState(false);
+
   const [supplyTransportMode, setSupplyTransportMode] = useState(
     SUPPLY_TRANSPORT_MODE_MULTIMODAL
   );
-
   const [pickSupplyDestinationMode, setPickSupplyDestinationMode] = useState(false);
   const [supplyResult, setSupplyResult] = useState(null);
   const [selectedOptionNo, setSelectedOptionNo] = useState(null);
@@ -127,18 +156,32 @@ export default function App() {
   const [selectedRecommendationId, setSelectedRecommendationId] = useState(null);
   const [isQueryingNotebookLm, setIsQueryingNotebookLm] = useState(false);
 
+  const selectedDeclaration = useMemo(() => {
+    const items = Array.isArray(declarationResult?.items) ? declarationResult.items : [];
+    return (
+      items.find((item) => String(item.declaration_id) === String(selectedDeclarationId)) ||
+      null
+    );
+  }, [declarationResult, selectedDeclarationId]);
+
   const selectedRef = useRef([]);
   const selectedIdsRef = useRef({ a: null, b: null });
   const hoverIdRef = useRef(null);
+  const mapClickHandledRef = useRef(false);
+  const pickDeclarationDestinationModeRef = useRef(false);
   const pickSupplyDestinationModeRef = useRef(false);
   const pickRecommendationBasePointModeRef = useRef(false);
   const activeModeRef = useRef(activeMode);
+  const isSearchingDeclarationsRef = useRef(false);
+  const isBuildingDeclarationRouteRef = useRef(false);
   const isSearchingSupplyRef = useRef(false);
   const isSearchingRecommendationsRef = useRef(false);
   const isQueryingNotebookLmRef = useRef(false);
 
   const selectedProductRef = useRef(selectedProduct);
   const needVolumeTonsRef = useRef(needVolumeTons);
+  const declarationResultRef = useRef(declarationResult);
+  const selectedDeclarationRef = useRef(selectedDeclaration);
   const supplyTransportModeRef = useRef(supplyTransportMode);
   const recommendationModeRef = useRef(recommendationMode);
   const recommendationTransportModeRef = useRef(recommendationTransportMode);
@@ -169,11 +212,19 @@ const routeApiBase = useMemo(() => {
     SEARCH_MESSAGES_BY_MODE[supplyTransportMode] ||
     SEARCH_MESSAGES_BY_MODE[SUPPLY_TRANSPORT_MODE_MULTIMODAL];
 
-  const activeLoaderMessages = isQueryingNotebookLm
+  const activeLoaderMessages = isBuildingDeclarationRoute
+    ? DECLARATION_ROUTE_MESSAGES
+    : isSearchingDeclarations
+    ? DECLARATION_SEARCH_MESSAGES
+    : isQueryingNotebookLm
     ? NOTEBOOK_QUERY_MESSAGES
     : isSearchingRecommendations
     ? RECOMMENDATION_MESSAGES
     : activeSupplyMessages;
+
+  useEffect(() => {
+    pickDeclarationDestinationModeRef.current = pickDeclarationDestinationMode;
+  }, [pickDeclarationDestinationMode]);
 
   useEffect(() => {
     pickSupplyDestinationModeRef.current = pickSupplyDestinationMode;
@@ -186,6 +237,14 @@ const routeApiBase = useMemo(() => {
   useEffect(() => {
     activeModeRef.current = activeMode;
   }, [activeMode]);
+
+  useEffect(() => {
+    isSearchingDeclarationsRef.current = isSearchingDeclarations;
+  }, [isSearchingDeclarations]);
+
+  useEffect(() => {
+    isBuildingDeclarationRouteRef.current = isBuildingDeclarationRoute;
+  }, [isBuildingDeclarationRoute]);
 
   useEffect(() => {
     isSearchingSupplyRef.current = isSearchingSupply;
@@ -206,6 +265,14 @@ const routeApiBase = useMemo(() => {
   useEffect(() => {
     needVolumeTonsRef.current = needVolumeTons;
   }, [needVolumeTons]);
+
+  useEffect(() => {
+    declarationResultRef.current = declarationResult;
+  }, [declarationResult]);
+
+  useEffect(() => {
+    selectedDeclarationRef.current = selectedDeclaration;
+  }, [selectedDeclaration]);
 
   useEffect(() => {
     supplyTransportModeRef.current = supplyTransportMode;
@@ -239,6 +306,10 @@ const routeApiBase = useMemo(() => {
     if (!map) return;
 
     const shouldUseCrosshair =
+      (activeMode === MODE_DECLARATIONS &&
+        pickDeclarationDestinationMode &&
+        !isSearchingDeclarations &&
+        !isBuildingDeclarationRoute) ||
       (activeMode === MODE_PRODUCT_SEARCH && pickSupplyDestinationMode && !isSearchingSupply) ||
       (activeMode === MODE_MARKET_RECOMMENDATIONS &&
         pickRecommendationBasePointMode &&
@@ -247,20 +318,34 @@ const routeApiBase = useMemo(() => {
 
     map.getCanvas().style.cursor = shouldUseCrosshair ? "crosshair" : "";
 
-    if (activeMode !== MODE_STATION_ROUTE || pickSupplyDestinationMode || pickRecommendationBasePointMode) {
+    if (
+      activeMode !== MODE_STATION_ROUTE ||
+      pickDeclarationDestinationMode ||
+      pickSupplyDestinationMode ||
+      pickRecommendationBasePointMode
+    ) {
       clearHoverState(map, hoverIdRef);
     }
   }, [
     activeMode,
+    pickDeclarationDestinationMode,
     pickSupplyDestinationMode,
     pickRecommendationBasePointMode,
+    isSearchingDeclarations,
+    isBuildingDeclarationRoute,
     isSearchingSupply,
     isSearchingRecommendations,
     isQueryingNotebookLm,
   ]);
 
   useEffect(() => {
-    if (!isSearchingSupply && !isSearchingRecommendations && !isQueryingNotebookLm) {
+    if (
+      !isSearchingDeclarations &&
+      !isBuildingDeclarationRoute &&
+      !isSearchingSupply &&
+      !isSearchingRecommendations &&
+      !isQueryingNotebookLm
+    ) {
       setSearchMessageIndex(0);
       return;
     }
@@ -270,10 +355,19 @@ const routeApiBase = useMemo(() => {
     }, 1400);
 
     return () => window.clearInterval(timer);
-  }, [isSearchingSupply, isSearchingRecommendations, isQueryingNotebookLm, activeLoaderMessages.length]);
+  }, [
+    isSearchingDeclarations,
+    isBuildingDeclarationRoute,
+    isSearchingSupply,
+    isSearchingRecommendations,
+    isQueryingNotebookLm,
+    activeLoaderMessages.length,
+  ]);
 
   useEffect(() => {
     return () => {
+      if (declarationAbortRef.current) declarationAbortRef.current.abort();
+      if (declarationRouteAbortRef.current) declarationRouteAbortRef.current.abort();
       if (supplyAbortRef.current) supplyAbortRef.current.abort();
       if (recommendationAbortRef.current) recommendationAbortRef.current.abort();
       if (notebookLmAbortRef.current) notebookLmAbortRef.current.abort();
@@ -332,7 +426,7 @@ const routeApiBase = useMemo(() => {
       hash: true,
       style: {
         version: 8,
-        glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+        glyphs: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
         sources: {
           osm: {
             type: "raster",
@@ -634,12 +728,185 @@ const routeApiBase = useMemo(() => {
         },
       });
 
+      map.addSource("declarations", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+        cluster: true,
+        clusterRadius: 72,
+        clusterMaxZoom: 15,
+        clusterProperties: {
+          max_bucket: ["max", ["get", "volume_bucket_idx"]],
+        },
+      });
+      map.addLayer({
+        id: "declarations-clusters",
+        type: "circle",
+        source: "declarations",
+        filter: ["has", "point_count"],
+        paint: {
+          "circle-radius": [
+            "step",
+            ["get", "point_count"],
+            20,
+            10,
+            24,
+            30,
+            30,
+            100,
+            36,
+          ],
+          "circle-color": [
+            "case",
+            ["==", ["coalesce", ["get", "max_bucket"], 0], 4],
+            "#ef4444",
+            ["==", ["coalesce", ["get", "max_bucket"], 0], 3],
+            "#f97316",
+            ["==", ["coalesce", ["get", "max_bucket"], 0], 2],
+            "#eab308",
+            ["==", ["coalesce", ["get", "max_bucket"], 0], 1],
+            "#8b5cf6",
+            "#84cc16",
+          ],
+          "circle-opacity": 0.9,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fff",
+        },
+      });
+      map.addLayer({
+        id: "declarations-cluster-count",
+        type: "symbol",
+        source: "declarations",
+        filter: ["has", "point_count"],
+        layout: {
+          "text-field": ["get", "point_count_abbreviated"],
+          "text-size": 12,
+          "text-font": ["Open Sans Bold"],
+        },
+        paint: {
+          "text-color": "#111",
+        },
+      });
+      map.addLayer({
+        id: "declarations-points",
+        type: "circle",
+        source: "declarations",
+        filter: ["!", ["has", "point_count"]],
+        paint: {
+          "circle-radius": [
+            "case",
+            ["==", ["get", "volume_bucket_idx"], 4],
+            16,
+            ["==", ["get", "volume_bucket_idx"], 3],
+            13,
+            ["==", ["get", "volume_bucket_idx"], 2],
+            11,
+            ["==", ["get", "volume_bucket_idx"], 1],
+            9,
+            7,
+          ],
+          "circle-color": [
+            "case",
+            ["==", ["get", "volume_bucket_idx"], 4],
+            "#ef4444",
+            ["==", ["get", "volume_bucket_idx"], 3],
+            "#f97316",
+            ["==", ["get", "volume_bucket_idx"], 2],
+            "#eab308",
+            ["==", ["get", "volume_bucket_idx"], 1],
+            "#8b5cf6",
+            "#84cc16",
+          ],
+          "circle-opacity": 0.9,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fff",
+        },
+      });
+      map.addSource("selectedDeclaration", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addLayer({
+        id: "selected-declaration-point",
+        type: "circle",
+        source: "selectedDeclaration",
+        paint: {
+          "circle-radius": 18,
+          "circle-color": "rgba(255,255,255,0.05)",
+          "circle-stroke-width": 3,
+          "circle-stroke-color": "#111827",
+        },
+      });
+
+      map.addSource("declarationRoute", { type: "geojson", data: emptyFeatureCollection() });
+      map.addLayer({
+        id: "declaration-route-road",
+        type: "line",
+        source: "declarationRoute",
+        filter: ["in", ["get", "mode"], ["literal", ["road_start", "road_end"]]],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": "#4b5563",
+          "line-width": 4,
+          "line-dasharray": [2, 2],
+          "line-opacity": 0.9,
+        },
+      });
+      map.addLayer({
+        id: "declaration-route-rail",
+        type: "line",
+        source: "declarationRoute",
+        filter: ["==", ["get", "mode"], "rail"],
+        layout: { "line-join": "round", "line-cap": "round" },
+        paint: {
+          "line-color": "#2563eb",
+          "line-width": 5,
+          "line-opacity": 0.9,
+        },
+      });
+      map.addSource("declarationRoutePoints", {
+        type: "geojson",
+        data: emptyFeatureCollection(),
+      });
+      map.addLayer({
+        id: "declaration-route-points",
+        type: "circle",
+        source: "declarationRoutePoints",
+        paint: {
+          "circle-radius": [
+            "case",
+            ["==", ["get", "point_role"], "origin"],
+            9,
+            ["==", ["get", "point_role"], "destination"],
+            9,
+            7,
+          ],
+          "circle-color": [
+            "case",
+            ["==", ["get", "point_role"], "origin"],
+            "#dc2626",
+            ["==", ["get", "point_role"], "destination"],
+            "#111827",
+            ["==", ["get", "point_role"], "origin_station"],
+            "#f59e0b",
+            ["==", ["get", "point_role"], "destination_station"],
+            "#16a34a",
+            "#2563eb",
+          ],
+          "circle-opacity": 0.95,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#fff",
+        },
+      });
+
       setReady(true);
       setStatus("ok");
       applyVisibility(map, { showLines, showStations, showPorts, showElevators });
     });
 
     map.on("mousemove", "rail-stations", (e) => {
+      const declarationPick =
+        activeModeRef.current === MODE_DECLARATIONS &&
+        pickDeclarationDestinationModeRef.current;
       const recommendationPick =
         activeModeRef.current === MODE_MARKET_RECOMMENDATIONS &&
         pickRecommendationBasePointModeRef.current;
@@ -647,14 +914,21 @@ const routeApiBase = useMemo(() => {
         activeModeRef.current === MODE_PRODUCT_SEARCH &&
         pickSupplyDestinationModeRef.current;
 
-      if (recommendationPick || supplyPick) {
+      if (declarationPick || recommendationPick || supplyPick) {
         map.getCanvas().style.cursor =
-          isSearchingSupplyRef.current || isSearchingRecommendationsRef.current ? "" : "crosshair";
+          isSearchingDeclarationsRef.current ||
+          isBuildingDeclarationRouteRef.current ||
+          isSearchingSupplyRef.current ||
+          isSearchingRecommendationsRef.current
+            ? ""
+            : "crosshair";
         return;
       }
 
       if (
         activeModeRef.current !== MODE_STATION_ROUTE ||
+        isSearchingDeclarationsRef.current ||
+        isBuildingDeclarationRouteRef.current ||
         isSearchingSupplyRef.current ||
         isSearchingRecommendationsRef.current
       ) {
@@ -692,6 +966,10 @@ const routeApiBase = useMemo(() => {
 
     map.on("mouseleave", "rail-stations", () => {
       const shouldUseCrosshair =
+        (activeModeRef.current === MODE_DECLARATIONS &&
+          pickDeclarationDestinationModeRef.current &&
+          !isSearchingDeclarationsRef.current &&
+          !isBuildingDeclarationRouteRef.current) ||
         (activeModeRef.current === MODE_PRODUCT_SEARCH &&
           pickSupplyDestinationModeRef.current &&
           !isSearchingSupplyRef.current) ||
@@ -704,10 +982,29 @@ const routeApiBase = useMemo(() => {
     });
 
     map.on("click", "rail-stations", async (e) => {
-      if (isSearchingSupplyRef.current || isSearchingRecommendationsRef.current) return;
+      if (
+        isSearchingDeclarationsRef.current ||
+        isBuildingDeclarationRouteRef.current ||
+        isSearchingSupplyRef.current ||
+        isSearchingRecommendationsRef.current
+      ) {
+        return;
+      }
 
       const f = e.features?.[0];
       if (!f) return;
+      mapClickHandledRef.current = true;
+
+      if (activeModeRef.current === MODE_DECLARATIONS && pickDeclarationDestinationModeRef.current) {
+        await handleDeclarationDestinationClick({
+          type: "station",
+          osm_id: Number(f.properties?.osm_id),
+          name: f.properties?.name || "Станция",
+          lon: e.lngLat.lng,
+          lat: e.lngLat.lat,
+        });
+        return;
+      }
 
       if (activeModeRef.current === MODE_MARKET_RECOMMENDATIONS && pickRecommendationBasePointModeRef.current) {
         handleRecommendationBasePointClick({
@@ -806,9 +1103,28 @@ const routeApiBase = useMemo(() => {
     });
 
     map.on("click", "port-terminals", async (e) => {
-      if (isSearchingSupplyRef.current || isSearchingRecommendationsRef.current) return;
+      if (
+        isSearchingDeclarationsRef.current ||
+        isBuildingDeclarationRouteRef.current ||
+        isSearchingSupplyRef.current ||
+        isSearchingRecommendationsRef.current
+      ) {
+        return;
+      }
       const f = e.features?.[0];
       if (!f) return;
+      mapClickHandledRef.current = true;
+
+      if (activeModeRef.current === MODE_DECLARATIONS && pickDeclarationDestinationModeRef.current) {
+        await handleDeclarationDestinationClick({
+          type: "port",
+          osm_id: Number(f.properties?.osm_id) || null,
+          name: f.properties?.name || "Порт",
+          lon: e.lngLat.lng,
+          lat: e.lngLat.lat,
+        });
+        return;
+      }
 
       if (activeModeRef.current === MODE_MARKET_RECOMMENDATIONS && pickRecommendationBasePointModeRef.current) {
         handleRecommendationBasePointClick({
@@ -833,9 +1149,28 @@ const routeApiBase = useMemo(() => {
     });
 
     map.on("click", "elevators", async (e) => {
-      if (isSearchingSupplyRef.current || isSearchingRecommendationsRef.current) return;
+      if (
+        isSearchingDeclarationsRef.current ||
+        isBuildingDeclarationRouteRef.current ||
+        isSearchingSupplyRef.current ||
+        isSearchingRecommendationsRef.current
+      ) {
+        return;
+      }
       const f = e.features?.[0];
       if (!f) return;
+      mapClickHandledRef.current = true;
+
+      if (activeModeRef.current === MODE_DECLARATIONS && pickDeclarationDestinationModeRef.current) {
+        await handleDeclarationDestinationClick({
+          type: "elevator",
+          osm_id: Number(f.properties?.osm_id) || null,
+          name: f.properties?.name || "Элеватор",
+          lon: e.lngLat.lng,
+          lat: e.lngLat.lat,
+        });
+        return;
+      }
 
       if (activeModeRef.current === MODE_MARKET_RECOMMENDATIONS && pickRecommendationBasePointModeRef.current) {
         handleRecommendationBasePointClick({
@@ -853,6 +1188,102 @@ const routeApiBase = useMemo(() => {
           type: "elevator",
           osm_id: Number(f.properties?.osm_id) || null,
           name: f.properties?.name || "Элеватор",
+          lon: e.lngLat.lng,
+          lat: e.lngLat.lat,
+        });
+      }
+    });
+
+
+    map.on("click", "declarations-clusters", (e) => {
+      if (activeModeRef.current !== MODE_DECLARATIONS) return;
+      mapClickHandledRef.current = true;
+
+      const feature = e.features?.[0];
+      const clusterId = feature?.properties?.cluster_id;
+      if (clusterId == null) return;
+
+      map.getSource("declarations")?.getClusterExpansionZoom(clusterId, (err, zoom) => {
+        if (err) return;
+        const coordinates = feature.geometry?.coordinates;
+        if (!coordinates) return;
+        map.easeTo({
+          center: coordinates,
+          zoom,
+          duration: 400,
+        });
+      });
+    });
+
+    map.on("click", "declarations-points", (e) => {
+      if (activeModeRef.current !== MODE_DECLARATIONS) return;
+      mapClickHandledRef.current = true;
+
+      const feature = e.features?.[0];
+      if (!feature) return;
+
+      const declarationId = String(feature.properties?.declaration_id ?? "");
+      if (!declarationId) return;
+
+      selectDeclarationById(declarationId, {
+        centerOnSelection: false,
+        popupLngLat: feature.geometry?.coordinates,
+      });
+    });
+
+    map.on("mouseenter", "declarations-clusters", () => {
+      if (activeModeRef.current === MODE_DECLARATIONS && !pickDeclarationDestinationModeRef.current) {
+        map.getCanvas().style.cursor = "pointer";
+      }
+    });
+
+    map.on("mouseleave", "declarations-clusters", () => {
+      if (
+        activeModeRef.current === MODE_DECLARATIONS &&
+        pickDeclarationDestinationModeRef.current &&
+        !isSearchingDeclarationsRef.current &&
+        !isBuildingDeclarationRouteRef.current
+      ) {
+        map.getCanvas().style.cursor = "crosshair";
+      } else {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+
+    map.on("mouseenter", "declarations-points", () => {
+      if (activeModeRef.current === MODE_DECLARATIONS && !pickDeclarationDestinationModeRef.current) {
+        map.getCanvas().style.cursor = "pointer";
+      }
+    });
+
+    map.on("mouseleave", "declarations-points", () => {
+      if (
+        activeModeRef.current === MODE_DECLARATIONS &&
+        pickDeclarationDestinationModeRef.current &&
+        !isSearchingDeclarationsRef.current &&
+        !isBuildingDeclarationRouteRef.current
+      ) {
+        map.getCanvas().style.cursor = "crosshair";
+      } else {
+        map.getCanvas().style.cursor = "";
+      }
+    });
+
+    map.on("click", async (e) => {
+      if (mapClickHandledRef.current) {
+        mapClickHandledRef.current = false;
+        return;
+      }
+
+      if (
+        activeModeRef.current === MODE_DECLARATIONS &&
+        pickDeclarationDestinationModeRef.current &&
+        !isSearchingDeclarationsRef.current &&
+        !isBuildingDeclarationRouteRef.current
+      ) {
+        await handleDeclarationDestinationClick({
+          type: "station",
+          name: `Точка ${round2(e.lngLat.lng)}, ${round2(e.lngLat.lat)}`,
           lon: e.lngLat.lng,
           lat: e.lngLat.lat,
         });
@@ -906,6 +1337,300 @@ const routeApiBase = useMemo(() => {
       setReady(false);
     };
   }, [railTiles, routeApiBase]);
+
+
+  function cancelDeclarationSearch(nextStatus) {
+    if (declarationAbortRef.current) {
+      declarationAbortRef.current.abort();
+      declarationAbortRef.current = null;
+    }
+    setIsSearchingDeclarations(false);
+    if (nextStatus) setStatus(nextStatus);
+  }
+
+  function cancelDeclarationRoute(nextStatus) {
+    if (declarationRouteAbortRef.current) {
+      declarationRouteAbortRef.current.abort();
+      declarationRouteAbortRef.current = null;
+    }
+    setIsBuildingDeclarationRoute(false);
+    if (nextStatus) setStatus(nextStatus);
+  }
+
+  function setDeclarationSourceData(map, result) {
+    const src = map?.getSource("declarations");
+    if (!src) return;
+    src.setData(result?.feature_collection ?? emptyFeatureCollection());
+  }
+
+  function clearDeclarationRouteLayers(map) {
+    map?.getSource("declarationRoute")?.setData(emptyFeatureCollection());
+    map?.getSource("declarationRoutePoints")?.setData(emptyFeatureCollection());
+  }
+
+  function drawSelectedDeclaration(map, declaration) {
+    const src = map?.getSource("selectedDeclaration");
+    if (!src) return;
+
+    if (!declaration || declaration.lon == null || declaration.lat == null) {
+      src.setData(emptyFeatureCollection());
+      return;
+    }
+
+    src.setData({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [Number(declaration.lon), Number(declaration.lat)],
+          },
+          properties: {
+            declaration_id: declaration.declaration_id,
+            declarer: declaration.declarer,
+          },
+        },
+      ],
+    });
+  }
+
+  function drawDeclarationRoute(map, payload) {
+    if (!map) return;
+    map.getSource("declarationRoute")?.setData({
+      type: "FeatureCollection",
+      features: Array.isArray(payload?.route_segments) ? payload.route_segments : [],
+    });
+    map.getSource("declarationRoutePoints")?.setData({
+      type: "FeatureCollection",
+      features: Array.isArray(payload?.points) ? payload.points : [],
+    });
+
+    const features = [
+      ...(payload?.route_segments || []),
+      ...(payload?.points || []),
+    ].filter(Boolean);
+    fitToFeatures(map, features, payload?.destination);
+  }
+
+  function clearDeclarationState(map, { keepSearchResult = false } = {}) {
+    setPickDeclarationDestinationMode(false);
+    cancelDeclarationSearch();
+    cancelDeclarationRoute();
+    clearDeclarationRouteLayers(map);
+    drawSelectedDeclaration(
+      map,
+      keepSearchResult ? selectedDeclarationRef.current : null
+    );
+    setDeclarationRouteResult(null);
+
+    if (!keepSearchResult) {
+      setDeclarationResult(null);
+      setSelectedDeclarationId(null);
+      setDeclarationRouteResult(null);
+      setDeclarationSourceData(map, null);
+      drawSelectedDeclaration(map, null);
+    }
+  }
+
+  function openDeclarationPopup(map, declaration, lngLatOrCoords) {
+    if (!map || !declaration || !lngLatOrCoords) return;
+
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(lngLatOrCoords)
+      .setHTML(buildDeclarationPopupHtml(declaration))
+      .addTo(map);
+  }
+
+  function selectDeclarationById(
+    declarationId,
+    { centerOnSelection = false, popupLngLat = null } = {}
+  ) {
+    const map = mapRef.current;
+    const currentResult = declarationResultRef.current;
+    const items = Array.isArray(currentResult?.items) ? currentResult.items : [];
+    const declaration =
+      items.find((item) => String(item.declaration_id) === String(declarationId)) || null;
+
+    if (!declaration) return;
+
+    cancelDeclarationRoute();
+    setPickDeclarationDestinationMode(false);
+    setSelectedDeclarationId(String(declarationId));
+    setDeclarationRouteResult(null);
+    if (map) {
+      clearDeclarationRouteLayers(map);
+      drawSelectedDeclaration(map, declaration);
+      if (centerOnSelection && declaration.lon != null && declaration.lat != null) {
+        map.easeTo({
+          center: [Number(declaration.lon), Number(declaration.lat)],
+          zoom: Math.max(map.getZoom(), 6),
+          duration: 400,
+        });
+      }
+      if (popupLngLat) {
+        openDeclarationPopup(map, declaration, popupLngLat);
+      }
+    }
+    setStatus(`Выбрана декларация: ${declaration.declarer || "(без названия)"}`);
+  }
+
+  function applyDeclarationQuickRange(days) {
+    const end = todayIso();
+    const start = shiftDateIso(end, -days);
+    setDeclarationDateFrom(start);
+    setDeclarationDateTo(end);
+  }
+
+  async function searchDeclarations() {
+    const map = mapRef.current;
+    if (!map) return;
+
+    cancelSupplySearch();
+    cancelRecommendationSearch();
+    cancelNotebookLmQuery();
+    resetSelectionInternal(map);
+    clearDeclarationState(map);
+    clearSupplyState(map);
+    clearRecommendationState(map);
+
+    const payload = {
+      product: resolveProductToUse(),
+      min_volume_tons: Number(needVolumeTonsRef.current) || 0,
+      date_from: declarationDateFrom || null,
+      date_to: declarationDateTo || null,
+      limit: 4000,
+    };
+
+    const controller = new AbortController();
+    if (declarationAbortRef.current) declarationAbortRef.current.abort();
+    declarationAbortRef.current = controller;
+
+    try {
+      setIsSearchingDeclarations(true);
+      setStatus("Ищем декларации…");
+      const response = await fetch(`${routeApiBase}/api/declarations/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data?.error || response.statusText || "declarations search failed");
+      }
+
+      setDeclarationResult(data);
+      setDeclarationRouteResult(null);
+      setDeclarationSourceData(map, data);
+
+      const firstId = data?.items?.[0]?.declaration_id ?? null;
+      setSelectedDeclarationId(firstId ? String(firstId) : null);
+
+      if (firstId) {
+        const first = data.items.find(
+          (item) => String(item.declaration_id) === String(firstId)
+        );
+        drawSelectedDeclaration(map, first);
+      } else {
+        drawSelectedDeclaration(map, null);
+      }
+
+      if (Array.isArray(data?.feature_collection?.features) && data.feature_collection.features.length) {
+        fitToFeatures(map, data.feature_collection.features);
+      }
+
+      setStatus(
+        data?.total_count
+          ? `Найдено деклараций: ${data.total_count}`
+          : "По выбранным фильтрам декларации не найдены"
+      );
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        setStatus("Поиск деклараций отменён");
+        return;
+      }
+      console.error("Declaration search error:", err);
+      setStatus(`declarations error: ${err.message}`);
+    } finally {
+      if (declarationAbortRef.current === controller) declarationAbortRef.current = null;
+      setIsSearchingDeclarations(false);
+    }
+  }
+
+ async function handleDeclarationDestinationClick(destination) {
+  const map = mapRef.current;
+  const declaration = selectedDeclarationRef.current;
+
+  if (!map || !declaration) {
+    setStatus("Сначала выбери декларацию");
+    return;
+  }
+
+  if (declaration.lon == null || declaration.lat == null) {
+    setStatus("У выбранной декларации нет координат");
+    return;
+  }
+
+  const payload = {
+    declaration: {
+      declaration_id: declaration.declaration_id,
+      registration_number: declaration.registration_number,
+      declarer: declaration.declarer,
+      manufacturer: declaration.manufacturer,
+      region: declaration.region,
+      country: declaration.country,
+      product: declaration.product,
+      product_name: declaration.product_name,
+      volume_tons: declaration.volume_tons,
+      publication_date: declaration.publication_date,
+      lon: declaration.lon,
+      lat: declaration.lat,
+    },
+    destination,
+    route_preference: "multimodal",
+    transport_mode: "multimodal",
+  };
+
+  const controller = new AbortController();
+  if (declarationRouteAbortRef.current) declarationRouteAbortRef.current.abort();
+  declarationRouteAbortRef.current = controller;
+
+  try {
+    setIsBuildingDeclarationRoute(true);
+    setPickDeclarationDestinationMode(false);
+    setStatus("Строим маршрут от декларации…");
+
+    const response = await fetch(`${routeApiBase}/api/declarations/route`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data?.error || "route not found");
+    }
+
+    setDeclarationRouteResult(data);
+    drawDeclarationRoute(map, data);
+    setStatus(`Маршрут построен: ${data?.route?.selected_mode || "ok"}`);
+  } catch (err) {
+    if (err?.name === "AbortError") return;
+    console.error("Declaration route error:", err);
+    setDeclarationRouteResult(null);
+    clearDeclarationRouteLayers(map);
+    setStatus(`declaration route error: ${err.message}`);
+  } finally {
+    if (declarationRouteAbortRef.current === controller) {
+      declarationRouteAbortRef.current = null;
+    }
+    setIsBuildingDeclarationRoute(false);
+  }
+}
 
   function cancelSupplySearch(nextStatus) {
     if (supplyAbortRef.current) {
@@ -968,6 +1693,7 @@ const routeApiBase = useMemo(() => {
     if (!map) return;
 
     resetSelectionInternal(map);
+    clearDeclarationState(map);
     clearRecommendationState(map);
 
     const productToUse = resolveProductToUse();
@@ -1319,6 +2045,7 @@ const routeApiBase = useMemo(() => {
 
   function clearEverything(map) {
     resetSelectionInternal(map);
+    clearDeclarationState(map);
     clearSupplyState(map);
     clearRecommendationState(map);
     clearHoverState(map, hoverIdRef);
@@ -1326,13 +2053,18 @@ const routeApiBase = useMemo(() => {
 
   function switchMode(nextMode) {
     if (nextMode === activeMode) return;
+    cancelDeclarationSearch();
+    cancelDeclarationRoute();
     cancelSupplySearch();
     cancelRecommendationSearch();
+    cancelNotebookLmQuery();
     const map = mapRef.current;
     if (map) clearEverything(map);
     setActiveMode(nextMode);
     setStatus(
-      nextMode === MODE_STATION_ROUTE
+      nextMode === MODE_DECLARATIONS
+        ? "режим: декларации"
+        : nextMode === MODE_STATION_ROUTE
         ? "режим: маршрут между станциями"
         : nextMode === MODE_PRODUCT_SEARCH
         ? "режим: поиск продукта"
@@ -1341,6 +2073,8 @@ const routeApiBase = useMemo(() => {
   }
 
   function handleProductChange(nextProduct) {
+    cancelDeclarationSearch();
+    cancelDeclarationRoute();
     cancelSupplySearch();
     cancelRecommendationSearch();
     cancelNotebookLmQuery();
@@ -1348,6 +2082,7 @@ const routeApiBase = useMemo(() => {
     setSelectedProduct(nextProduct);
     const map = mapRef.current;
     if (map) {
+      clearDeclarationState(map);
       clearSupplyState(map);
       clearRecommendationState(map);
     }
@@ -1356,11 +2091,17 @@ const routeApiBase = useMemo(() => {
   }
 
   function handleNeedChange(nextNeed) {
+    cancelDeclarationSearch();
+    cancelDeclarationRoute();
     cancelSupplySearch();
     cancelRecommendationSearch();
     cancelNotebookLmQuery();
     needVolumeTonsRef.current = nextNeed;
     setNeedVolumeTons(nextNeed);
+    const map = mapRef.current;
+    if (map) {
+      clearDeclarationState(map);
+    }
     resetNotebookLmArtifacts();
     setStatus("изменилась потребность — обнови поиск");
   }
@@ -1404,9 +2145,19 @@ const routeApiBase = useMemo(() => {
       <div ref={mapContainerRef} style={{ position: "absolute", inset: 0 }} />
 
       <LoadingOverlay
-        open={isSearchingSupply || isSearchingRecommendations || isQueryingNotebookLm}
-        title={
+        open={
+          isSearchingDeclarations ||
+          isBuildingDeclarationRoute ||
+          isSearchingSupply ||
+          isSearchingRecommendations ||
           isQueryingNotebookLm
+        }
+        title={
+          isBuildingDeclarationRoute
+            ? "Строим маршрут от декларации"
+            : isSearchingDeclarations
+            ? "Ищем декларации"
+            : isQueryingNotebookLm
             ? "Запрашиваем NotebookLM"
             : isSearchingRecommendations
             ? "Считаем рекомендации"
@@ -1421,10 +2172,14 @@ const routeApiBase = useMemo(() => {
         isSearchingSupply={isSearchingSupply}
         isSearchingRecommendations={isSearchingRecommendations}
         isQueryingNotebookLm={isQueryingNotebookLm}
+        isSearchingDeclarations={isSearchingDeclarations}
+        isBuildingDeclarationRoute={isBuildingDeclarationRoute}
         isStationRouteMode={activeMode === MODE_STATION_ROUTE}
+        isDeclarationMode={activeMode === MODE_DECLARATIONS}
         isProductSearchMode={activeMode === MODE_PRODUCT_SEARCH}
         isRecommendationMode={activeMode === MODE_MARKET_RECOMMENDATIONS}
         onSwitchToStationRoute={() => switchMode(MODE_STATION_ROUTE)}
+        onSwitchToDeclarations={() => switchMode(MODE_DECLARATIONS)}
         onSwitchToProductSearch={() => switchMode(MODE_PRODUCT_SEARCH)}
         onSwitchToRecommendations={() => switchMode(MODE_MARKET_RECOMMENDATIONS)}
         showLines={showLines}
@@ -1446,6 +2201,24 @@ const routeApiBase = useMemo(() => {
         onProductChange={handleProductChange}
         needVolumeTons={needVolumeTons}
         onNeedVolumeChange={handleNeedChange}
+        declarationDateFrom={declarationDateFrom}
+        declarationDateTo={declarationDateTo}
+        onDeclarationDateFromChange={setDeclarationDateFrom}
+        onDeclarationDateToChange={setDeclarationDateTo}
+        onApplyDeclarationQuickRange={applyDeclarationQuickRange}
+        onSearchDeclarations={searchDeclarations}
+        onClearDeclarations={() => {
+          const map = mapRef.current;
+          if (!map) return;
+          clearDeclarationState(map);
+          setStatus("ok");
+        }}
+        declarationResult={declarationResult}
+        selectedDeclaration={selectedDeclaration}
+        pickDeclarationDestinationMode={pickDeclarationDestinationMode}
+        onToggleDeclarationDestinationPick={() =>
+          setPickDeclarationDestinationMode((prev) => !prev)
+        }
         supplyTransportMode={supplyTransportMode}
         onSupplyTransportModeChange={handleSupplyTransportModeChange}
         pickSupplyDestinationMode={pickSupplyDestinationMode}
@@ -1484,6 +2257,19 @@ const routeApiBase = useMemo(() => {
         }}
         recommendationResult={recommendationResult}
       />
+
+      {activeMode === MODE_DECLARATIONS && (
+        <DeclarationResultsPanel
+          declarationResult={declarationResult}
+          selectedDeclarationId={selectedDeclarationId}
+          declarationRouteResult={declarationRouteResult}
+          onSelectDeclaration={(id) =>
+            selectDeclarationById(id, {
+              centerOnSelection: true,
+            })
+          }
+        />
+      )}
 
       {activeMode === MODE_STATION_ROUTE && <RouteInfoPanel routeInfo={routeInfo} />}
 
@@ -1578,4 +2364,45 @@ function fitToFeatures(map, features = [], singlePoint) {
   if (!bounds.isEmpty()) {
     map.fitBounds(bounds, { padding: 60, maxZoom: 9, duration: 500 });
   }
+}
+
+function todayIso() {
+  const now = new Date();
+  return toIsoDate(now);
+}
+
+function shiftDateIso(baseIso, days) {
+  const date = new Date(`${baseIso}T00:00:00`);
+  date.setDate(date.getDate() + Number(days || 0));
+  return toIsoDate(date);
+}
+
+function toIsoDate(value) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildDeclarationPopupHtml(item) {
+  const bucketLabels = {
+    0: "&lt; 100 т",
+    1: "100 – 500 т",
+    2: "500 – 1 000 т",
+    3: "1 000 – 10 000 т",
+    4: "&gt; 10 000 т",
+  };
+
+  return `
+    <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(item.product || "Декларация")}</div>
+    <div style="margin-bottom:4px;">${escapeHtml(item.declarer || "(без названия)")}</div>
+    ${item.region ? `<div style="color:#6b7280;margin-bottom:4px;">${escapeHtml(item.region)}</div>` : ""}
+    <div><b>Объём:</b> ${formatTons(item.volume_tons)}</div>
+    ${item.publication_date ? `<div><b>Дата:</b> ${escapeHtml(item.publication_date)}</div>` : ""}
+    <div><b>Категория:</b> ${bucketLabels[item.volume_bucket_idx] || "—"}</div>
+  `;
+}
+
+function round2(value) {
+  return Math.round(Number(value) * 100) / 100;
 }

@@ -61,16 +61,27 @@ const RECOMMENDATION_TRANSPORT_MODE_ITEMS = [
   },
 ];
 
+const DECLARATION_QUICK_RANGES = [
+  { label: "Сегодня", days: 0 },
+  { label: "7 дней", days: 7 },
+  { label: "30 дней", days: 30 },
+  { label: "60 дней", days: 60 },
+];
+
 export default function LeftPanel({
   ready,
   status,
   isSearchingSupply,
   isSearchingRecommendations,
   isQueryingNotebookLm,
+  isSearchingDeclarations,
+  isBuildingDeclarationRoute,
   isStationRouteMode,
+  isDeclarationMode,
   isProductSearchMode,
   isRecommendationMode,
   onSwitchToStationRoute,
+  onSwitchToDeclarations,
   onSwitchToProductSearch,
   onSwitchToRecommendations,
   showLines,
@@ -87,6 +98,18 @@ export default function LeftPanel({
   onProductChange,
   needVolumeTons,
   onNeedVolumeChange,
+  declarationDateFrom,
+  declarationDateTo,
+  activeDeclarationQuickRange,
+  onDeclarationDateFromChange,
+  onDeclarationDateToChange,
+  onApplyDeclarationQuickRange,
+  onSearchDeclarations,
+  onClearDeclarations,
+  declarationResult,
+  selectedDeclaration,
+  pickDeclarationDestinationMode,
+  onToggleDeclarationDestinationPick,
   supplyTransportMode,
   onSupplyTransportModeChange,
   pickSupplyDestinationMode,
@@ -108,7 +131,13 @@ export default function LeftPanel({
   onClearRecommendations,
   recommendationResult,
 }) {
-  const busy = isSearchingSupply || isSearchingRecommendations || isQueryingNotebookLm;
+  const busy =
+    isSearchingSupply ||
+    isSearchingRecommendations ||
+    isQueryingNotebookLm ||
+    isSearchingDeclarations ||
+    isBuildingDeclarationRoute;
+
   const notebookLmDirectEnabled = Boolean(notebookLmStatus?.direct_query_enabled);
   const provider = String(notebookLmStatus?.provider || notebookLmStatus?.mode || "manual");
   const notebookLmModeLabel = notebookLmDirectEnabled
@@ -125,7 +154,7 @@ export default function LeftPanel({
         left: 12,
         zIndex: 10,
         padding: 10,
-        background: "rgba(255,255,255,0.92)",
+        background: "rgba(255,255,255,0.94)",
         borderRadius: 10,
         boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
         fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
@@ -187,6 +216,14 @@ export default function LeftPanel({
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
           <button
+            onClick={onSwitchToDeclarations}
+            disabled={busy}
+            style={buttonStyle(isDeclarationMode, busy)}
+          >
+            Декларации
+          </button>
+
+          <button
             onClick={onSwitchToStationRoute}
             disabled={busy}
             style={buttonStyle(isStationRouteMode, busy)}
@@ -212,7 +249,7 @@ export default function LeftPanel({
         </div>
       </div>
 
-      {(isProductSearchMode || isRecommendationMode) && (
+      {(isDeclarationMode || isProductSearchMode || isRecommendationMode) && (
         <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
           <div style={{ fontWeight: 800, marginBottom: 8 }}>Продукт и объём</div>
 
@@ -239,13 +276,136 @@ export default function LeftPanel({
           </label>
           <input
             type="number"
-            min="0.01"
+            min="0"
             step="0.01"
             value={needVolumeTons}
             disabled={busy}
             onChange={(e) => onNeedVolumeChange(e.target.value)}
             style={inputStyle}
+            placeholder="Например: 100"
           />
+        </div>
+      )}
+
+      {isDeclarationMode && (
+        <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
+          <div style={{ fontWeight: 800, marginBottom: 8 }}>Поиск деклараций</div>
+
+          <div
+            style={{
+              border: "1px solid rgba(0,0,0,0.1)",
+              borderRadius: 14,
+              padding: 12,
+              background: "#f8fafc",
+              marginBottom: 10,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+              🗓️ Период публикации
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+              {DECLARATION_QUICK_RANGES.map((item) => {
+                const active = activeDeclarationQuickRange === item.days;
+                return (
+                  <button
+                    key={item.days}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onApplyDeclarationQuickRange(item.days)}
+                    style={quickButtonStyle(active, disabledButton(busy))}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <input
+                type="date"
+                value={declarationDateFrom}
+                disabled={busy}
+                onChange={(e) => onDeclarationDateFromChange(e.target.value)}
+                style={inputStyleNoMargin}
+              />
+              <input
+                type="date"
+                value={declarationDateTo}
+                disabled={busy}
+                onChange={(e) => onDeclarationDateToChange(e.target.value)}
+                style={inputStyleNoMargin}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <button
+              onClick={onSearchDeclarations}
+              disabled={!ready || busy}
+              style={buttonStyle(false, !ready || busy)}
+            >
+              Показать декларации
+            </button>
+
+            <button
+              onClick={onClearDeclarations}
+              disabled={!ready || busy}
+              style={secondaryButtonStyle(!ready || busy)}
+            >
+              Очистить
+            </button>
+          </div>
+
+          <div style={{ marginTop: 10 }}>
+            <button
+              onClick={onToggleDeclarationDestinationPick}
+              disabled={!ready || busy || !selectedDeclaration}
+              style={buttonStyle(pickDeclarationDestinationMode, !ready || busy || !selectedDeclaration)}
+            >
+              {pickDeclarationDestinationMode
+                ? "Кликни в любую точку карты"
+                : "Построить маршрут от выбранной декларации"}
+            </button>
+          </div>
+
+          {selectedDeclaration ? (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "#f3f4f6",
+                border: "1px solid rgba(0,0,0,0.08)",
+                fontSize: 13,
+                lineHeight: 1.45,
+              }}
+            >
+              <div>
+                Выбрана декларация: <b>{selectedDeclaration.declarer || "(без названия)"}</b>
+              </div>
+              <div>
+                Объём: <b>{formatTons(selectedDeclaration.volume_tons)}</b>
+              </div>
+              {selectedDeclaration.publication_date && (
+                <div>
+                  Дата: <b>{selectedDeclaration.publication_date}</b>
+                </div>
+              )}
+            </div>
+          ) : (
+            declarationResult && (
+              <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
+                Выбери декларацию на карте или в правой панели.
+              </div>
+            )
+          )}
+
+          {declarationResult && (
+            <div style={{ marginTop: 10, fontSize: 12, color: "#555", lineHeight: 1.45 }}>
+              Найдено деклараций: <b>{declarationResult.total_count || 0}</b>
+            </div>
+          )}
         </div>
       )}
 
@@ -290,8 +450,8 @@ export default function LeftPanel({
 
             <button
               onClick={onClearSupply}
-              disabled={!ready}
-              style={secondaryButtonStyle(!ready)}
+              disabled={!ready || busy}
+              style={secondaryButtonStyle(!ready || busy)}
             >
               {isSearchingSupply ? "Отменить поиск" : "Сброс поиска"}
             </button>
@@ -520,6 +680,32 @@ function ModeButtons({ items, value, disabled, onChange }) {
   );
 }
 
+function formatTons(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0 т";
+  return `${Math.round(n * 100) / 100} т`;
+}
+
+function disabledButton(disabled) {
+  return {
+    opacity: disabled ? 0.7 : 1,
+    cursor: disabled ? "not-allowed" : "pointer",
+  };
+}
+
+function quickButtonStyle(active, extra = {}) {
+  return {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: active ? "1px solid rgba(17,24,39,0.9)" : "1px solid rgba(0,0,0,0.15)",
+    background: active ? "#111" : "white",
+    color: active ? "#fff" : "#111",
+    fontSize: 12,
+    fontWeight: active ? 700 : 500,
+    ...extra,
+  };
+}
+
 function buttonStyle(active, disabled) {
   return {
     padding: "8px 10px",
@@ -558,6 +744,15 @@ const inputStyle = {
   borderRadius: 8,
   border: "1px solid rgba(0,0,0,0.15)",
   marginBottom: 8,
+  boxSizing: "border-box",
+};
+
+const inputStyleNoMargin = {
+  width: "100%",
+  padding: "8px 10px",
+  borderRadius: 8,
+  border: "1px solid rgba(0,0,0,0.15)",
+  boxSizing: "border-box",
 };
 
 const textareaStyle = {

@@ -111,6 +111,17 @@ const RECOMMENDATION_TRADER_MAX_PAIR_DISTANCE_KM = Number(
 const MAX_HYDRATED_POINT_CACHE = Number(process.env.MAX_HYDRATED_POINT_CACHE ?? 1000);
 const MAX_RESOLVED_ANCHOR_CACHE = Number(process.env.MAX_RESOLVED_ANCHOR_CACHE ?? 1000);
 const MAX_DELIVERY_ROUTE_CACHE = Number(process.env.MAX_DELIVERY_ROUTE_CACHE ?? 400);
+
+const DECLARATION_SEARCH_LIMIT = Number(process.env.DECLARATION_SEARCH_LIMIT ?? 4000);
+const DECLARATION_MULTIMODAL_MIN_KM = Number(
+  process.env.DECLARATION_MULTIMODAL_MIN_KM ?? 500
+);
+const DECLARATION_META_CACHE_TTL_MS = Number(
+  process.env.DECLARATION_META_CACHE_TTL_MS ?? 300000
+);
+
+let declarationMetaCache = null;
+let declarationMetaCacheAt = 0;
 const ROAD_PREF_SHORT_KM = Number(process.env.ROAD_PREF_SHORT_KM ?? 280);
 const ROAD_PREF_ADVANTAGE_KM = Number(process.env.ROAD_PREF_ADVANTAGE_KM ?? 60);
 const ROAD_PREF_MULTIMODAL_RATIO = Number(
@@ -278,7 +289,7 @@ function buildRailFirstPreferenceScore(row, sourceStation, demandStation) {
   const sourceStationDistKm = Number(sourceStation?.dist_m ?? 0) / 1000;
   const demandStationDistKm = Number(demandStation?.dist_m ?? 0) / 1000;
   const sameStationPenalty =
-    Number(sourceStation?.osm_id) === Number(demandStation?.osm_id) ? 500 : 0;
+    Number(sourceStation?.osm_id) === Number(demandStation?.osm_id) ? 50 : 0;
   const directKm = Number(row.direct_distance_km ?? 0);
 
   return (
@@ -472,10 +483,7 @@ function chooseRouteSummary({ roadOnly, multimodal, railOnly, preference = ROUTE
   if (preference === ROUTE_PREF_ROAD) return roadOnly ?? null;
   if (preference === ROUTE_PREF_RAIL) return railOnly ?? multimodal ?? null;
   if (preference === ROUTE_PREF_MULTIMODAL) {
-    if (multimodal && !shouldPreferRoadOverMultimodal(roadOnly, multimodal, sameStation)) {
-      return multimodal;
-    }
-    return roadOnly ?? multimodal ?? railOnly ?? null;
+    return multimodal ?? null;
   }
 
   if (sameStation && roadOnly) return roadOnly;
@@ -1617,7 +1625,7 @@ async function enrichSupplyCandidateMultimodal(
       railPool,
       sourceRoadSnap,
       Number(sourceStationRoadNode.id),
-      { allowWideSearch: false }
+      { allowWideSearch: true }
     );
 
     if (!roadStartRoute && !STRICT_ROAD_GEOMETRY) {
@@ -1659,7 +1667,7 @@ async function enrichSupplyCandidateMultimodal(
         railPool,
         Number(demandStationRoadNode.id),
         destRoadSnap,
-        { allowWideSearch: false }
+        { allowWideSearch: true }
       );
 
       if (!roadEndRoute && !STRICT_ROAD_GEOMETRY) {
@@ -2298,7 +2306,7 @@ async function evaluateDeliveryRoute({
           railPool,
           originRoadSnap,
           Number(originStationRoadNode.id),
-          { allowWideSearch: false }
+          { allowWideSearch: true }
         );
 
         if (!roadStartRoute && !STRICT_ROAD_GEOMETRY) {
@@ -2320,7 +2328,7 @@ async function evaluateDeliveryRoute({
           railPool,
           Number(destinationStationRoadNode.id),
           destinationRoadSnap,
-          { allowWideSearch: false }
+          { allowWideSearch: true }
         );
 
         if (!roadEndRoute && !STRICT_ROAD_GEOMETRY) {
@@ -2394,6 +2402,152 @@ async function evaluateDeliveryRoute({
 
   setCachedValue(deliveryRouteCache, cacheKey, result, MAX_DELIVERY_ROUTE_CACHE);
   return result;
+}
+
+
+function declarationPointExpr(alias = "d") {
+  return `COALESCE(${alias}.geom, CASE WHEN ${alias}.lon IS NOT NULL AND ${alias}.lat IS NOT NULL THEN ST_SetSRID(ST_MakePoint(${alias}.lon, ${alias}.lat), 4326) ELSE NULL END)`;
+}
+
+function declarationProductLabelExpr(alias = "d") {
+  return `COALESCE(
+    NULLIF((
+      SELECT trim(v)
+      FROM unnest(COALESCE(${alias}.product_name, ARRAY[]::text[])) AS v
+      WHERE trim(COALESCE(v, '')) <> ''
+      LIMIT 1
+    ), ''),
+    NULLIF((
+      SELECT trim(v)
+      FROM unnest(COALESCE(${alias}.product, ARRAY[]::text[])) AS v
+      WHERE trim(COALESCE(v, '')) <> ''
+      LIMIT 1
+    ), ''),
+    ''
+  )`;
+}
+
+function declarationProductFilterExpr(placeholder, alias = "d") {
+  return `(
+    EXISTS (
+      SELECT 1
+      FROM unnest(COALESCE(${alias}.product_name, ARRAY[]::text[])) AS v
+      WHERE lower(trim(COALESCE(v, ''))) LIKE '%' || lower(trim(${placeholder})) || '%'
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM unnest(COALESCE(${alias}.product, ARRAY[]::text[])) AS v
+      WHERE lower(trim(COALESCE(v, ''))) LIKE '%' || lower(trim(${placeholder})) || '%'
+    )
+  )`;
+}
+
+function declarationVolumeBucketIdx(volume) {
+  const n = Number(volume);
+  if (!Number.isFinite(n)) return 0;
+  if (n < 100) return 0;
+  if (n < 500) return 1;
+  if (n < 1000) return 2;
+  if (n <= 10000) return 3;
+  return 4;
+}
+
+function normalizeIsoDateString(value) {
+  const text = String(value ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : null;
+}
+
+function mapDeclarationRowToItem(row, fallbackProduct = "") {
+  const volumeTons = Number(row.volume_tons ?? 0);
+  const publicationDate = row.publication_date
+    ? String(row.publication_date).slice(0, 10)
+    : null;
+
+  return {
+    declaration_id: String(row.declaration_id ?? row.id ?? ""),
+    external_declaration_id: row.external_declaration_id ?? null,
+    registration_number: row.registration_number ?? null,
+    declarer: row.declarer || "(без названия)",
+    manufacturer: row.manufacturer || "",
+    region: row.region || "",
+    country: row.country || "",
+    product: row.product || fallbackProduct || "",
+    product_name: row.product_name || row.product || fallbackProduct || "",
+    volume_tons: round2(volumeTons),
+    publication_date: publicationDate,
+    lon: row.lon == null ? null : Number(row.lon),
+    lat: row.lat == null ? null : Number(row.lat),
+    volume_bucket_idx: declarationVolumeBucketIdx(volumeTons),
+  };
+}
+
+function buildDeclarationFeature(item) {
+  if (item?.lon == null || item?.lat == null) return null;
+
+  return {
+    type: "Feature",
+    geometry: {
+      type: "Point",
+      coordinates: [Number(item.lon), Number(item.lat)],
+    },
+    properties: {
+      declaration_id: item.declaration_id,
+      external_declaration_id: item.external_declaration_id,
+      registration_number: item.registration_number,
+      declarer: item.declarer,
+      manufacturer: item.manufacturer,
+      region: item.region,
+      country: item.country,
+      product: item.product,
+      product_name: item.product_name,
+      volume_tons: item.volume_tons,
+      publication_date: item.publication_date,
+      volume_bucket_idx: item.volume_bucket_idx,
+    },
+  };
+}
+
+function buildDeclarationBaseSelectSql(extraWhere = "") {
+  const pointExpr = declarationPointExpr("d");
+  return `
+    SELECT
+      d.id::text AS declaration_id,
+      d.declaration_id AS external_declaration_id,
+      d.registration_number,
+      COALESCE(NULLIF(trim(d.declarer), ''), '(без названия)') AS declarer,
+      COALESCE(NULLIF(trim(d.manufacturer), ''), '') AS manufacturer,
+      COALESCE(NULLIF(trim(d.region), ''), '') AS region,
+      COALESCE(NULLIF(trim(d.country), ''), '') AS country,
+      ${declarationProductLabelExpr("d")} AS product,
+      ${declarationProductLabelExpr("d")} AS product_name,
+      COALESCE(d.batch_size_total, 0)::double precision AS volume_tons,
+      d.publication_date AS publication_date,
+      ST_X(${pointExpr}) AS lon,
+      ST_Y(${pointExpr}) AS lat
+    FROM public.declarations d
+    WHERE ${pointExpr} IS NOT NULL
+      ${extraWhere}
+  `;
+}
+
+async function fetchDeclarationById(declarationId) {
+  if (declarationId == null || String(declarationId).trim() === "") {
+    return null;
+  }
+
+  const sql = `
+    WITH base AS (
+      ${buildDeclarationBaseSelectSql(`
+        AND (d.id::text = $1 OR COALESCE(d.declaration_id, '') = $1 OR COALESCE(d.registration_number, '') = $1)
+      `)}
+    )
+    SELECT *
+    FROM base
+    LIMIT 1
+  `;
+
+  const r = await declPool.query(sql, [String(declarationId)]);
+  return r.rows?.[0] ?? null;
 }
 
 app.get("/health", async (_req, res) => {
@@ -2574,18 +2728,330 @@ app.get("/api/products", async (_req, res) => {
 
   const sql = `
     SELECT DISTINCT trim(x.product_name) AS product_name
-    FROM declarations d
-    CROSS JOIN LATERAL unnest(d.product_name) AS x(product_name)
+    FROM public.declarations d
+    CROSS JOIN LATERAL unnest(COALESCE(d.product_name, ARRAY[]::text[])) AS x(product_name)
     WHERE x.product_name IS NOT NULL
       AND trim(x.product_name) <> ''
-    ORDER BY 1;
+    ORDER BY 1
   `;
 
   try {
     const r = await declPool.query(sql);
-    res.json(r.rows.map((row) => row.product_name));
+    res.json(r.rows.map((row) => row.product_name).filter(Boolean));
   } catch (e) {
     console.error("GET /api/products:", e);
+    res.status(500).json({ error: String(e?.message ?? e) });
+  }
+});
+
+app.post("/api/declarations/search", async (req, res) => {
+  if (!process.env.DECL_DB_HOST) {
+    res.status(500).json({ error: "DECL_DB_HOST is not configured" });
+    return;
+  }
+
+  try {
+    const product = String(req.body.product ?? "").trim();
+    const minVolumeTons = asNum(
+      req.body.min_volume_tons ??
+        req.body.volume_tons ??
+        req.body.need_volume_tons ??
+        req.body.volume,
+      0
+    );
+    const dateFrom = normalizeIsoDateString(req.body.date_from);
+    const dateTo = normalizeIsoDateString(req.body.date_to);
+    const limit = clamp(
+      asNum(req.body.limit, DECLARATION_SEARCH_LIMIT),
+      1,
+      DECLARATION_SEARCH_LIMIT
+    );
+
+    const conditions = [];
+    const params = [];
+
+    if (product) {
+      params.push(product);
+      conditions.push(declarationProductFilterExpr(`$${params.length}`));
+    }
+
+    if (Number.isFinite(minVolumeTons) && minVolumeTons > 0) {
+      params.push(minVolumeTons);
+      conditions.push(`COALESCE(d.batch_size_total, 0) >= $${params.length}`);
+    }
+
+    if (dateFrom) {
+      params.push(dateFrom);
+      conditions.push(`d.publication_date >= $${params.length}::date`);
+    }
+
+    if (dateTo) {
+      params.push(dateTo);
+      conditions.push(`d.publication_date <= $${params.length}::date`);
+    }
+
+    params.push(limit);
+
+    const extraWhere = conditions.length
+      ? `
+        AND ${conditions.join("\n        AND ")}
+      `
+      : "";
+
+    const sql = `
+      WITH base AS (
+        ${buildDeclarationBaseSelectSql(extraWhere)}
+      )
+      SELECT
+        base.*,
+        COUNT(*) OVER() AS total_count
+      FROM base
+      ORDER BY base.publication_date DESC NULLS LAST, base.volume_tons DESC NULLS LAST, base.declaration_id DESC
+      LIMIT $${params.length}
+    `;
+
+    const r = await declPool.query(sql, params);
+    const rows = r.rows ?? [];
+    const items = rows.map((row) => mapDeclarationRowToItem(row, product));
+    const features = items.map((item) => buildDeclarationFeature(item)).filter(Boolean);
+    const totalCount = rows[0] ? Number(rows[0].total_count ?? rows.length) : 0;
+
+    res.json({
+      ok: true,
+      product: product || null,
+      min_volume_tons: Number.isFinite(minVolumeTons) ? round2(minVolumeTons) : 0,
+      date_from: dateFrom,
+      date_to: dateTo,
+      total_count: totalCount,
+      shown_count: items.length,
+      items,
+      feature_collection: {
+        type: "FeatureCollection",
+        features,
+      },
+    });
+  } catch (e) {
+    console.error("POST /api/declarations/search:", e);
+    res.status(500).json({ error: String(e?.message ?? e) });
+  }
+});
+
+app.post("/api/declarations/route", async (req, res) => {
+  if (!process.env.DECL_DB_HOST) {
+    res.status(500).json({ error: "DECL_DB_HOST is not configured" });
+    return;
+  }
+
+  try {
+    const rawDeclaration = req.body.declaration ?? {};
+    const rawDeclarationId =
+      rawDeclaration.declaration_id ?? rawDeclaration.id ?? req.body.declaration_id;
+    const requestedPreference = normalizeRoutePreferenceMode(
+      req.body.transport_mode ?? req.body.route_preference
+    );
+    const destination = normalizeMapPointInput(req.body.destination);
+
+    if (!destination || destination.lon == null || destination.lat == null) {
+      res.status(400).json({ error: "destination lon/lat are invalid" });
+      return;
+    }
+
+    let declarationRow = null;
+    if (rawDeclarationId != null) {
+      declarationRow = await fetchDeclarationById(rawDeclarationId);
+    }
+
+    if (!declarationRow) {
+      const fallbackLon = asNum(rawDeclaration.lon, NaN);
+      const fallbackLat = asNum(rawDeclaration.lat, NaN);
+      if (!Number.isFinite(fallbackLon) || !Number.isFinite(fallbackLat)) {
+        res.status(404).json({ error: "declaration not found" });
+        return;
+      }
+
+      declarationRow = {
+        declaration_id: String(rawDeclarationId ?? rawDeclaration.id ?? ""),
+        external_declaration_id: rawDeclaration.external_declaration_id ?? null,
+        registration_number: rawDeclaration.registration_number ?? null,
+        declarer:
+          String(rawDeclaration.declarer ?? rawDeclaration.name ?? "").trim() ||
+          "(без названия)",
+        manufacturer: String(rawDeclaration.manufacturer ?? "").trim(),
+        region: String(rawDeclaration.region ?? "").trim(),
+        country: String(rawDeclaration.country ?? "").trim(),
+        product:
+          String(rawDeclaration.product_name ?? rawDeclaration.product ?? "").trim(),
+        product_name:
+          String(rawDeclaration.product_name ?? rawDeclaration.product ?? "").trim(),
+        volume_tons: asNum(rawDeclaration.volume_tons, 0),
+        publication_date: normalizeIsoDateString(rawDeclaration.publication_date),
+        lon: fallbackLon,
+        lat: fallbackLat,
+      };
+    }
+
+    const declaration = mapDeclarationRowToItem(
+      declarationRow,
+      String(rawDeclaration.product_name ?? rawDeclaration.product ?? "").trim()
+    );
+
+    if (!Number.isFinite(Number(declaration.lon)) || !Number.isFinite(Number(declaration.lat))) {
+      res.status(400).json({ error: "У выбранной декларации нет координат" });
+      return;
+    }
+
+    const straightDistanceKm = roughDistanceKm(
+      { lon: declaration.lon, lat: declaration.lat },
+      { lon: destination.lon, lat: destination.lat }
+    );
+
+    const routePreference = requestedPreference || ROUTE_PREF_MULTIMODAL;
+
+    const nearestStationCache = new Map();
+    const nearestRoadNodeCache = new Map();
+    const stationRoadNodeCache = new Map();
+    const routeCache = new Map();
+
+    const route = await evaluateDeliveryRoute({
+      origin: {
+        type: "elevator",
+        name: declaration.declarer,
+        lon: declaration.lon,
+        lat: declaration.lat,
+      },
+      destination,
+      routePreference,
+      nearestStationCache,
+      nearestRoadNodeCache,
+      stationRoadNodeCache,
+      routeCache,
+    });
+
+    if (!route) {
+      const originPoint = await hydrateMapPoint(railPool, {
+        type: "elevator",
+        name: declaration.declarer,
+        lon: declaration.lon,
+        lat: declaration.lat,
+      });
+      const destinationPoint = await hydrateMapPoint(railPool, destination);
+      const originStation = originPoint ? await resolveDemandStationForPoint(railPool, originPoint) : null;
+      const destinationStation = destinationPoint ? await resolveDemandStationForPoint(railPool, destinationPoint) : null;
+      const originRoadSnap = originPoint ? await getNearestRoadSnapByLonLat(railPool, Number(originPoint.lon), Number(originPoint.lat)) : null;
+      const destinationRoadSnap = destinationPoint ? await getNearestRoadSnapByLonLat(railPool, Number(destinationPoint.lon), Number(destinationPoint.lat)) : null;
+      const originStationRoadNode = originStation ? await getRoadNodeForStation(railPool, Number(originStation.osm_id)) : null;
+      const destinationStationRoadNode = destinationStation ? await getRoadNodeForStation(railPool, Number(destinationStation.osm_id)) : null;
+      const railRoute = originStation && destinationStation
+        ? await buildRailRouteByNodes(railPool, Number(originStation.node_id), Number(destinationStation.node_id))
+        : null;
+      const roadStartRoute = originRoadSnap && originStationRoadNode
+        ? await buildRoadRouteFromSnapToNode(railPool, originRoadSnap, Number(originStationRoadNode.id), { allowWideSearch: true })
+        : null;
+      const roadEndRoute = destinationRoadSnap && destinationStationRoadNode
+        ? await buildRoadRouteFromNodeToSnap(railPool, Number(destinationStationRoadNode.id), destinationRoadSnap, { allowWideSearch: true })
+        : null;
+
+      res.status(404).json({
+        error: "multimodal route not found",
+        route_preference_used: routePreference,
+        decision_rule: "strict_multimodal_only",
+        debug: {
+          straight_distance_km: straightDistanceKm,
+          origin_point: originPoint,
+          destination_point: destinationPoint,
+          origin_station: originStation
+            ? { osm_id: Number(originStation.osm_id), name: originStation.name, dist_m: Number(originStation.dist_m ?? 0) }
+            : null,
+          destination_station: destinationStation
+            ? { osm_id: Number(destinationStation.osm_id), name: destinationStation.name, dist_m: Number(destinationStation.dist_m ?? 0) }
+            : null,
+          origin_road_snap_found: Boolean(originRoadSnap),
+          destination_road_snap_found: Boolean(destinationRoadSnap),
+          origin_station_road_node_found: Boolean(originStationRoadNode),
+          destination_station_road_node_found: Boolean(destinationStationRoadNode),
+          rail_route_found: Boolean(railRoute && Number(railRoute.km) > 0),
+          rail_km: railRoute ? round2(railRoute.km) : null,
+          road_start_found: Boolean(roadStartRoute),
+          road_start_km: roadStartRoute ? round2(roadStartRoute.km) : null,
+          road_end_found: Boolean(roadEndRoute),
+          road_end_km: roadEndRoute ? round2(roadEndRoute.km) : null,
+        },
+      });
+      return;
+    }
+
+    const hydratedDestination = await hydrateMapPoint(railPool, destination);
+    const originStationPoint = route.origin_station
+      ? await hydrateMapPoint(railPool, {
+          type: "station",
+          osm_id: route.origin_station.osm_id,
+        })
+      : null;
+    const destinationStationPoint = route.destination_station
+      ? await hydrateMapPoint(railPool, {
+          type: "station",
+          osm_id: route.destination_station.osm_id,
+        })
+      : null;
+
+    const destinationPointForFeature =
+      hydratedDestination ?? {
+        type: "station",
+        name: String(req.body.destination?.name ?? "").trim() || "Точка назначения",
+        lon: Number(destination.lon),
+        lat: Number(destination.lat),
+      };
+
+    const points = [
+      buildPointFeature(
+        {
+          type: "station",
+          name: declaration.declarer,
+          lon: declaration.lon,
+          lat: declaration.lat,
+        },
+        {
+          point_role: "origin",
+          name: declaration.declarer || "Декларация",
+          declaration_id: declaration.declaration_id,
+        }
+      ),
+      originStationPoint
+        ? buildPointFeature(originStationPoint, {
+            point_role: "origin_station",
+            name: route.origin_station?.name || "Станция отправления",
+          })
+        : null,
+      destinationStationPoint
+        ? buildPointFeature(destinationStationPoint, {
+            point_role: "destination_station",
+            name: route.destination_station?.name || "Станция прибытия",
+          })
+        : null,
+      buildPointFeature(destinationPointForFeature, {
+        point_role: "destination",
+        name: destinationPointForFeature.name || "Точка назначения",
+      }),
+    ].filter(Boolean);
+
+    res.json({
+      ok: true,
+      declaration,
+      destination: destinationPointForFeature,
+      straight_distance_km: straightDistanceKm,
+      decision_rule: "strict_multimodal_only",
+      route_preference_used: routePreference,
+      rail_enforced_from_distance: true,
+      origin_station: route.origin_station,
+      destination_station: route.destination_station,
+      route,
+      route_segments: buildRouteSegmentsFromSummary(route, {
+        route_scope: "declaration",
+      }),
+      points,
+    });
+  } catch (e) {
+    console.error("POST /api/declarations/route:", e);
     res.status(500).json({ error: String(e?.message ?? e) });
   }
 });
