@@ -1,51 +1,70 @@
-import React from "react";
+import React, { useState } from "react";
 
-export default function RouteInfoPanel({ routeInfo }) {
+export default function RouteInfoPanel({ routeInfo, collapsed, onCollapsedChange }) {
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const isControlled = typeof collapsed === "boolean";
+  const isCollapsed = isControlled ? collapsed : internalCollapsed;
+  const setCollapsed = (next) => {
+    if (!isControlled) setInternalCollapsed(next);
+    onCollapsedChange?.(next);
+  };
+
   if (!routeInfo) return null;
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 12,
-        right: 12,
-        zIndex: 10,
-        padding: 10,
-        background: "rgba(255,255,255,0.92)",
-        borderRadius: 10,
-        boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-        width: 320,
-        maxHeight: "34vh",
-        overflow: "auto",
-      }}
-    >
-      <div style={{ fontWeight: 800, marginBottom: 6 }}>
-        Маршрут станция-станция ({routeInfo.km} км)
+    <aside className={`floating-panel result-panel result-panel--narrow ${isCollapsed ? "is-collapsed" : ""}`}>
+      <div className="panel-header panel-header--sticky">
+        <div className="panel-title-wrap">
+          <div className="badge-row" style={{ marginBottom: 8 }}>
+            <span className="badge badge--primary">Станция → станция</span>
+            <span className="badge">{routeInfo.stations.length} станций</span>
+          </div>
+          <h3 className="panel-title panel-title--lg">Маршрут {routeInfo.km} км</h3>
+          <div className="panel-subtitle">Чистый список станций по рассчитанному маршруту.</div>
+        </div>
+
+        <div className="panel-header-actions">
+          <button type="button" className="icon-btn" onClick={() => setCollapsed(!isCollapsed)} aria-label={isCollapsed ? "Развернуть" : "Свернуть"}>
+            {isCollapsed ? "↑" : "↓"}
+          </button>
+        </div>
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: "left", padding: "6px 4px", borderBottom: "1px solid #ddd" }}>
-              №
-            </th>
-            <th style={{ textAlign: "left", padding: "6px 4px", borderBottom: "1px solid #ddd" }}>
-              Станция
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {routeInfo.stations.map((s) => (
-            <tr key={s.osm_id}>
-              <td style={{ padding: "6px 4px", borderBottom: "1px solid #eee", width: 32 }}>
-                {s.index}
-              </td>
-              <td style={{ padding: "6px 4px", borderBottom: "1px solid #eee" }}>{s.name}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+      <div className="panel-scroll">
+        <div className="panel-stack">
+          <section className="panel-section">
+            <div className="metric-grid">
+              <div className="metric-card"><div className="metric-label">Расстояние</div><div className="metric-value">{routeInfo.km} км</div></div>
+              <div className="metric-card"><div className="metric-label">Станций</div><div className="metric-value">{routeInfo.stations.length}</div></div>
+            </div>
+          </section>
+
+          <section className="panel-section">
+            <div>
+              <h3 className="section-title">Последовательность станций</h3>
+              <div className="section-subtitle">Весь путь в читабельной таблице.</div>
+            </div>
+            <div className="table-wrap">
+              <table className="table" style={{ minWidth: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 60 }}>№</th>
+                    <th>Станция</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {routeInfo.stations.map((s) => (
+                    <tr key={s.osm_id}>
+                      <td>{s.index}</td>
+                      <td>{s.name}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+    </aside>
   );
 }

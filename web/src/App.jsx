@@ -107,6 +107,9 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [activeMode, setActiveMode] = useState(MODE_DECLARATIONS);
 
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [resultPanelCollapsed, setResultPanelCollapsed] = useState(false);
+
   const [showLines, setShowLines] = useState(false);
   const [showStations, setShowStations] = useState(false);
   const [showPorts, setShowPorts] = useState(false);
@@ -222,6 +225,12 @@ const routeApiBase = useMemo(() => {
     ? RECOMMENDATION_MESSAGES
     : activeSupplyMessages;
 
+  function collapseFloatingPanels() {
+    setLeftPanelCollapsed(true);
+    setResultPanelCollapsed(true);
+  }
+
+
   useEffect(() => {
     pickDeclarationDestinationModeRef.current = pickDeclarationDestinationMode;
   }, [pickDeclarationDestinationMode]);
@@ -289,6 +298,22 @@ const routeApiBase = useMemo(() => {
   useEffect(() => {
     productsRef.current = products;
   }, [products]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const handleResize = () => map.resize();
+    const raf = window.requestAnimationFrame(handleResize);
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("orientationchange", handleResize);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("orientationchange", handleResize);
+    };
+  }, [ready]);
 
   useEffect(() => {
     loadProducts();
@@ -1107,6 +1132,7 @@ const routeApiBase = useMemo(() => {
           const data = JSON.parse(txt);
           map.getSource("route").setData({ type: "FeatureCollection", features: [data.route] });
           setRouteInfo({ km: data.km, stations: data.stations });
+          setResultPanelCollapsed(false);
           setStatus("ok");
         } catch (err) {
           console.error("Station route error:", err);
@@ -1292,6 +1318,7 @@ const routeApiBase = useMemo(() => {
         mapClickHandledRef.current = false;
         return;
       }
+
 
       if (
         activeModeRef.current === MODE_DECLARATIONS &&
@@ -1633,6 +1660,7 @@ const routeApiBase = useMemo(() => {
 
     setDeclarationRouteResult(data);
     drawDeclarationRoute(map, data);
+    setResultPanelCollapsed(false);
     setStatus(`Маршрут построен: ${data?.route?.selected_mode || "ok"}`);
   } catch (err) {
     if (err?.name === "AbortError") return;
@@ -1757,6 +1785,7 @@ const routeApiBase = useMemo(() => {
       if (!normalizedData.options?.length) {
         setStatus(normalizedData.empty_state_reason || "Нет вариантов");
       } else {
+        setResultPanelCollapsed(false);
         setStatus(`ok: показаны варианты ${normalizedData.options.length}`);
       }
     } catch (err) {
@@ -1920,6 +1949,7 @@ const routeApiBase = useMemo(() => {
       if (!result.results?.length) {
         setStatus("Не найдено ни одной рекомендации по текущим сигналам");
       } else {
+        setResultPanelCollapsed(false);
         setStatus(`ok: найдено ${result.results.length} рекомендаций`);
       }
     } catch (err) {
@@ -2171,9 +2201,30 @@ const routeApiBase = useMemo(() => {
   }, [declarationDateFrom, declarationDateTo]);
 
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+
+    const handleResize = () => {
+      try {
+        map.resize();
+      } catch {}
+    };
+
+    const rafId = window.requestAnimationFrame(handleResize);
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("orientationchange", handleResize);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("orientationchange", handleResize);
+    };
+  }, [ready]);
+
   return (
-    <div style={{ position: "relative", height: "100vh", width: "100vw" }}>
-      <div ref={mapContainerRef} style={{ position: "absolute", inset: 0 }} />
+    <div className="railmap-shell">
+      <div ref={mapContainerRef} className="railmap-map" />
 
       <LoadingOverlay
         open={
@@ -2249,13 +2300,17 @@ const routeApiBase = useMemo(() => {
         declarationResult={declarationResult}
         selectedDeclaration={selectedDeclaration}
         pickDeclarationDestinationMode={pickDeclarationDestinationMode}
-        onToggleDeclarationDestinationPick={() =>
-          setPickDeclarationDestinationMode((prev) => !prev)
-        }
+        onToggleDeclarationDestinationPick={() => {
+          collapseFloatingPanels();
+          setPickDeclarationDestinationMode((prev) => !prev);
+        }}
         supplyTransportMode={supplyTransportMode}
         onSupplyTransportModeChange={handleSupplyTransportModeChange}
         pickSupplyDestinationMode={pickSupplyDestinationMode}
-        onToggleDestinationPick={() => setPickSupplyDestinationMode((prev) => !prev)}
+        onToggleDestinationPick={() => {
+          collapseFloatingPanels();
+          setPickSupplyDestinationMode((prev) => !prev);
+        }}
         onClearSupply={() => {
           const map = mapRef.current;
           if (!map) return;
@@ -2270,9 +2325,10 @@ const routeApiBase = useMemo(() => {
         onMarketTransportModeChange={handleRecommendationTransportModeChange}
         recommendationBasePoint={recommendationBasePoint}
         pickRecommendationBasePointMode={pickRecommendationBasePointMode}
-        onToggleRecommendationBasePointPick={() =>
-          setPickRecommendationBasePointMode((prev) => !prev)
-        }
+        onToggleRecommendationBasePointPick={() => {
+          collapseFloatingPanels();
+          setPickRecommendationBasePointMode((prev) => !prev);
+        }}
         notebookLmStatus={notebookLmStatus}
         notebookLmPrompt={notebookLmPrompt}
         notebookLmRawAnswer={notebookLmRawAnswer}
@@ -2289,6 +2345,8 @@ const routeApiBase = useMemo(() => {
           setStatus("ok");
         }}
         recommendationResult={recommendationResult}
+        collapsed={leftPanelCollapsed}
+        onCollapsedChange={setLeftPanelCollapsed}
       />
 
       {activeMode === MODE_DECLARATIONS && (
@@ -2301,10 +2359,18 @@ const routeApiBase = useMemo(() => {
               centerOnSelection: true,
             })
           }
+          collapsed={resultPanelCollapsed}
+          onCollapsedChange={setResultPanelCollapsed}
         />
       )}
 
-      {activeMode === MODE_STATION_ROUTE && <RouteInfoPanel routeInfo={routeInfo} />}
+      {activeMode === MODE_STATION_ROUTE && (
+        <RouteInfoPanel
+          routeInfo={routeInfo}
+          collapsed={resultPanelCollapsed}
+          onCollapsedChange={setResultPanelCollapsed}
+        />
+      )}
 
       {activeMode === MODE_PRODUCT_SEARCH && (
         <SupplyResultsPanel
@@ -2315,6 +2381,8 @@ const routeApiBase = useMemo(() => {
             setSelectedOptionNo(optionNo);
             drawSupplyOption(mapRef.current, supplyResult, optionNo);
           }}
+          collapsed={resultPanelCollapsed}
+          onCollapsedChange={setResultPanelCollapsed}
         />
       )}
 
@@ -2326,6 +2394,8 @@ const routeApiBase = useMemo(() => {
             setSelectedRecommendationId(id);
             drawRecommendation(mapRef.current, recommendationResult, id);
           }}
+          collapsed={resultPanelCollapsed}
+          onCollapsedChange={setResultPanelCollapsed}
         />
       )}
     </div>

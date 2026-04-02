@@ -1,22 +1,21 @@
-import React from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const SUPPLY_TRANSPORT_MODE_ITEMS = [
   {
     value: "rail",
     label: "Ж/д",
     description:
-      "Ищем ближайших поставщиков к месту назначения, для каждого берём ближайшую станцию и строим только путь станция → станция. Если станции совпадают, рекомендуем режим «Авто».",
+      "Только железнодорожный сценарий. Если станции совпадают, система подскажет рассмотреть авто.",
   },
   {
     value: "road",
     label: "Авто",
-    description: "Только прямой автодорожный маршрут без железной дороги.",
+    description: "Прямой автодорожный маршрут без железной дороги.",
   },
   {
     value: "multimodal",
     label: "Ж/д + авто",
-    description:
-      "Только мультимодальные маршруты, где используются и ж/д, и авто.",
+    description: "Смешанная доставка с авто-плечами и ж/д участком.",
   },
 ];
 
@@ -24,12 +23,12 @@ const RECOMMENDATION_MODE_ITEMS = [
   {
     value: "sell",
     label: "Куда продать",
-    description: "Из вашей точки строим рейтинг направлений с высоким спросом.",
+    description: "Из вашей точки ищем лучшие рынки с высоким спросом.",
   },
   {
     value: "buy",
     label: "Откуда купить",
-    description: "В вашу точку ищем рынки с избытком предложения и строим подвоз.",
+    description: "В вашу точку ищем рынки с избытком предложения.",
   },
   {
     value: "trader",
@@ -42,22 +41,22 @@ const RECOMMENDATION_TRANSPORT_MODE_ITEMS = [
   {
     value: "best",
     label: "Лучший режим",
-    description: "Система сама сравнит авто, ж/д и мультимодал и выберет лучший вариант.",
+    description: "Система сама сравнивает авто, ж/д и мультимодал.",
   },
   {
     value: "road",
     label: "Только авто",
-    description: "Считается только прямой автодорожный маршрут.",
+    description: "Только прямой автодорожный маршрут.",
   },
   {
     value: "rail",
     label: "Только ж/д",
-    description: "Только чистый железнодорожный сценарий без авто-плеч.",
+    description: "Только чистый железнодорожный сценарий.",
   },
   {
     value: "multimodal",
     label: "Только ж/д + авто",
-    description: "Только смешанная доставка с авто-плечами и ж/д участком.",
+    description: "Только смешанная доставка.",
   },
 ];
 
@@ -130,7 +129,40 @@ export default function LeftPanel({
   onSearchRecommendations,
   onClearRecommendations,
   recommendationResult,
+  focusRequest,
+  collapsed,
+  onCollapsedChange,
 }) {
+  const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const isControlled = typeof collapsed === "boolean";
+  const isCollapsed = isControlled ? collapsed : internalCollapsed;
+  const setCollapsed = (next) => {
+    if (!isControlled) setInternalCollapsed(next);
+    onCollapsedChange?.(next);
+  };
+
+  const panelScrollRef = useRef(null);
+  const declarationRouteButtonRef = useRef(null);
+  const recommendationActionsRef = useRef(null);
+
+  useEffect(() => {
+    if (!focusRequest || isCollapsed) return;
+
+    const targetMap = {
+      "declaration-route": declarationRouteButtonRef.current,
+      "recommendation-actions": recommendationActionsRef.current,
+    };
+
+    const targetNode = targetMap[focusRequest.target];
+    if (!targetNode) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      targetNode.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusRequest, isCollapsed]);
+
   const busy =
     isSearchingSupply ||
     isSearchingRecommendations ||
@@ -146,537 +178,356 @@ export default function LeftPanel({
       : "Прямой запрос через backend"
     : "Ручной режим по prompt";
 
+  const activeModeLabel = useMemo(() => {
+    if (isDeclarationMode) return "Декларации";
+    if (isStationRouteMode) return "Маршрут между станциями";
+    if (isProductSearchMode) return "Поиск продукта";
+    return "Рыночные рекомендации";
+  }, [isDeclarationMode, isStationRouteMode, isProductSearchMode]);
+
+  if (isCollapsed) {
+    return (
+      <aside style={{ position: "absolute", top: 16, left: 16, zIndex: 20 }}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          aria-label="Открыть настройки"
+          title="Открыть настройки"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 18,
+            border: "1px solid rgba(148, 163, 184, 0.35)",
+            background: "rgba(255,255,255,0.96)",
+            boxShadow: "0 16px 40px rgba(15, 23, 42, 0.16)",
+            backdropFilter: "blur(14px)",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 24,
+            lineHeight: 1,
+            color: "#0f172a",
+          }}
+        >
+          ⚙
+        </button>
+      </aside>
+    );
+  }
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 12,
-        left: 12,
-        zIndex: 10,
-        padding: 10,
-        background: "rgba(255,255,255,0.94)",
-        borderRadius: 10,
-        boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
-        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
-        minWidth: 360,
-        maxWidth: 520,
-        maxHeight: "86vh",
-        overflow: "auto",
-      }}
-    >
-      <div style={{ fontWeight: 800, marginBottom: 6 }}>Статус</div>
-      <div style={{ fontSize: 12, color: "#555", marginBottom: 10 }}>{status}</div>
+    <aside className="floating-panel control-panel">
+      <div className="panel-header panel-header--sticky">
+        <div className="panel-title-wrap">
+          <div className="badge-row">
+            <span className="badge badge--primary">Railmap</span>
+            <span className={`badge ${ready ? "badge--success" : "badge--warning"}`}>
+              {ready ? "Карта готова" : "Загрузка карты"}
+            </span>
+          </div>
+          <div className="panel-subtitle" style={{ marginTop: 8 }}>
+            {activeModeLabel} · {status}
+          </div>
+        </div>
 
-      <div style={{ fontWeight: 800, marginBottom: 8 }}>Слои карты</div>
-
-      <div style={{ marginTop: 8, display: "grid", gap: 6, opacity: ready ? 1 : 0.6 }}>
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            disabled={!ready || busy}
-            checked={showLines}
-            onChange={(e) => setShowLines(e.target.checked)}
-          />
-          Ж/д линии
-        </label>
-
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            disabled={!ready || busy}
-            checked={showStations}
-            onChange={(e) => setShowStations(e.target.checked)}
-          />
-          Станции
-        </label>
-
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            disabled={!ready || busy}
-            checked={showPorts}
-            onChange={(e) => setShowPorts(e.target.checked)}
-          />
-          Порты
-        </label>
-
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            disabled={!ready || busy}
-            checked={showElevators}
-            onChange={(e) => setShowElevators(e.target.checked)}
-          />
-          Элеваторы
-        </label>
-      </div>
-
-      <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
-        <div style={{ fontWeight: 800, marginBottom: 8 }}>Режим работы</div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+        <div className="panel-header-actions">
           <button
-            onClick={onSwitchToDeclarations}
-            disabled={busy}
-            style={buttonStyle(isDeclarationMode, busy)}
+            type="button"
+            className="icon-btn"
+            onClick={() => setCollapsed(true)}
+            aria-label="Скрыть панель"
+            title="Скрыть панель"
           >
-            Декларации
-          </button>
-
-          <button
-            onClick={onSwitchToStationRoute}
-            disabled={busy}
-            style={buttonStyle(isStationRouteMode, busy)}
-          >
-            Между двумя станциями
-          </button>
-
-          <button
-            onClick={onSwitchToProductSearch}
-            disabled={busy}
-            style={buttonStyle(isProductSearchMode, busy)}
-          >
-            Поиск продукта
-          </button>
-
-          <button
-            onClick={onSwitchToRecommendations}
-            disabled={busy}
-            style={buttonStyle(isRecommendationMode, busy)}
-          >
-            Рыночные рекомендации
+            ⚙
           </button>
         </div>
       </div>
 
-      {(isDeclarationMode || isProductSearchMode || isRecommendationMode) && (
-        <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Продукт и объём</div>
-
-          <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>Продукт</label>
-          <select
-            value={selectedProduct}
-            disabled={busy}
-            onChange={(e) => onProductChange(e.target.value)}
-            style={selectStyle}
-          >
-            {products.length === 0 ? (
-              <option value={selectedProduct}>Нет данных</option>
-            ) : (
-              products.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))
-            )}
-          </select>
-
-          <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>
-            Объём, тонн
-          </label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={needVolumeTons}
-            disabled={busy}
-            onChange={(e) => onNeedVolumeChange(e.target.value)}
-            style={inputStyle}
-            placeholder="Например: 100"
-          />
-        </div>
-      )}
-
-      {isDeclarationMode && (
-        <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Поиск деклараций</div>
-
-          <div
-            style={{
-              border: "1px solid rgba(0,0,0,0.1)",
-              borderRadius: 14,
-              padding: 12,
-              background: "#f8fafc",
-              marginBottom: 10,
-            }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
-              🗓️ Период публикации
-            </div>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-              {DECLARATION_QUICK_RANGES.map((item) => {
-                const active = activeDeclarationQuickRange === item.days;
-                return (
-                  <button
-                    key={item.days}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onApplyDeclarationQuickRange(item.days)}
-                    style={quickButtonStyle(active, disabledButton(busy))}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <input
-                type="date"
-                value={declarationDateFrom}
-                disabled={busy}
-                onChange={(e) => onDeclarationDateFromChange(e.target.value)}
-                style={inputStyleNoMargin}
-              />
-              <input
-                type="date"
-                value={declarationDateTo}
-                disabled={busy}
-                onChange={(e) => onDeclarationDateToChange(e.target.value)}
-                style={inputStyleNoMargin}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <button
-              onClick={onSearchDeclarations}
-              disabled={!ready || busy}
-              style={buttonStyle(false, !ready || busy)}
-            >
-              Показать декларации
-            </button>
-
-            <button
-              onClick={onClearDeclarations}
-              disabled={!ready || busy}
-              style={secondaryButtonStyle(!ready || busy)}
-            >
-              Очистить
-            </button>
-          </div>
-
-          <div style={{ marginTop: 10 }}>
-            <button
-              onClick={onToggleDeclarationDestinationPick}
-              disabled={!ready || busy || !selectedDeclaration}
-              style={buttonStyle(pickDeclarationDestinationMode, !ready || busy || !selectedDeclaration)}
-            >
-              {pickDeclarationDestinationMode
-                ? "Кликни в любую точку карты"
-                : "Построить маршрут от выбранной декларации"}
-            </button>
-          </div>
-
-          {selectedDeclaration ? (
-            <div
-              style={{
-                marginTop: 10,
-                padding: "10px 12px",
-                borderRadius: 10,
-                background: "#f3f4f6",
-                border: "1px solid rgba(0,0,0,0.08)",
-                fontSize: 13,
-                lineHeight: 1.45,
-              }}
-            >
-              <div>
-                Выбрана декларация: <b>{selectedDeclaration.declarer || "(без названия)"}</b>
+      <div ref={panelScrollRef} className="panel-scroll">
+        <div className="panel-stack">
+          <section className="panel-section">
+            <div className="status-card">
+              <div className="status-line">
+                <strong>{activeModeLabel}</strong>
+                <span className={`badge ${busy ? "badge--warning" : "badge--success"}`}>
+                  {busy ? "В процессе" : "Готово"}
+                </span>
               </div>
-              <div>
-                Объём: <b>{formatTons(selectedDeclaration.volume_tons)}</b>
-              </div>
-              {selectedDeclaration.publication_date && (
-                <div>
-                  Дата: <b>{selectedDeclaration.publication_date}</b>
+              <div className="status-text">{status}</div>
+            </div>
+          </section>
+
+          <section className="panel-section">
+            <h3 className="section-title">Слои карты</h3>
+            <div className="toggle-grid" style={{ opacity: ready ? 1 : 0.7 }}>
+              <ToggleChip checked={showLines} disabled={!ready || busy} label="Ж/д линии" onChange={setShowLines} />
+              <ToggleChip checked={showStations} disabled={!ready || busy} label="Станции" onChange={setShowStations} />
+              <ToggleChip checked={showPorts} disabled={!ready || busy} label="Порты" onChange={setShowPorts} />
+              <ToggleChip checked={showElevators} disabled={!ready || busy} label="Элеваторы" onChange={setShowElevators} />
+            </div>
+          </section>
+
+          <section className="panel-section">
+            <h3 className="section-title">Режим работы</h3>
+            <div className="mode-grid">
+              <ModeCard active={isDeclarationMode} disabled={busy} title="Декларации" description="Фильтр по датам, объёму и построение маршрута от выбранной декларации." onClick={onSwitchToDeclarations} />
+              <ModeCard active={isStationRouteMode} disabled={busy} title="Станция → станция" description="Пошаговый выбор двух станций на карте и просмотр цепочки маршрута." onClick={onSwitchToStationRoute} />
+              <ModeCard active={isProductSearchMode} disabled={busy} title="Поиск продукта" description="Подбор поставщиков и маршрута под выбранную точку назначения." onClick={onSwitchToProductSearch} />
+              <ModeCard active={isRecommendationMode} disabled={busy} title="Рекомендации рынка" description="Маршруты и рейтинг направлений с учётом NotebookLM и сигналов рынка." onClick={onSwitchToRecommendations} />
+            </div>
+          </section>
+
+          {(isDeclarationMode || isProductSearchMode || isRecommendationMode) && (
+            <section className="panel-section">
+              <h3 className="section-title">Базовые параметры</h3>
+              <div className="control-grid">
+                <div className="field-group">
+                  <label className="field-label">Продукт</label>
+                  <select className="select-control" value={selectedProduct} disabled={busy} onChange={(e) => onProductChange(e.target.value)}>
+                    {products.length === 0 ? (
+                      <option value={selectedProduct}>Нет данных</option>
+                    ) : (
+                      products.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))
+                    )}
+                  </select>
                 </div>
-              )}
-            </div>
-          ) : (
-            declarationResult && (
-              <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
-                Выбери декларацию на карте или в правой панели.
+
+                <div className="field-group">
+                  <label className="field-label">Объём, тонн</label>
+                  <input className="input-control" type="number" min="0" step="1" value={needVolumeTons} disabled={busy} onChange={(e) => onNeedVolumeChange(e.target.value)} placeholder="Например, 100" />
+                </div>
               </div>
-            )
+            </section>
           )}
 
-          {declarationResult && (
-            <div style={{ marginTop: 10, fontSize: 12, color: "#555", lineHeight: 1.45 }}>
-              Найдено деклараций: <b>{declarationResult.total_count || 0}</b>
-            </div>
-          )}
-        </div>
-      )}
+          {isDeclarationMode && (
+            <section className="panel-section">
+              <h3 className="section-title">Поиск деклараций</h3>
 
-      {isStationRouteMode && (
-        <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Маршрут между станциями</div>
-          <div style={{ fontSize: 13, color: "#444", marginBottom: 8 }}>
-            Выбери на карте первую и вторую станцию.
-          </div>
-
-          <button
-            onClick={onResetSelection}
-            disabled={!ready || busy}
-            style={secondaryButtonStyle(!ready || busy)}
-          >
-            Сброс маршрута станций
-          </button>
-        </div>
-      )}
-
-      {isProductSearchMode && (
-        <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Поиск продукта</div>
-
-          <ModeButtons
-            items={SUPPLY_TRANSPORT_MODE_ITEMS}
-            value={supplyTransportMode}
-            disabled={busy}
-            onChange={onSupplyTransportModeChange}
-          />
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-            <button
-              onClick={onToggleDestinationPick}
-              disabled={!ready || busy}
-              style={buttonStyle(pickSupplyDestinationMode, !ready || busy)}
-            >
-              {pickSupplyDestinationMode
-                ? "Кликни по станции/порту/элеватору"
-                : "Указать назначение"}
-            </button>
-
-            <button
-              onClick={onClearSupply}
-              disabled={!ready || busy}
-              style={secondaryButtonStyle(!ready || busy)}
-            >
-              {isSearchingSupply ? "Отменить поиск" : "Сброс поиска"}
-            </button>
-          </div>
-
-          {supplyResult?.search_mode && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#555", lineHeight: 1.45 }}>
-              Последний поиск выполнен в режиме: <b>{supplyResult.search_mode}</b>
-            </div>
-          )}
-        </div>
-      )}
-
-      {isRecommendationMode && (
-        <div style={{ marginTop: 12, borderTop: "1px solid #ddd", paddingTop: 12 }}>
-          <div style={{ fontWeight: 800, marginBottom: 8 }}>Рыночные рекомендации</div>
-
-          <ModeButtons
-            items={RECOMMENDATION_MODE_ITEMS}
-            value={marketRecommendationMode}
-            disabled={busy}
-            onChange={onMarketRecommendationModeChange}
-          />
-
-          <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
-            Режим маршрута
-          </div>
-          <ModeButtons
-            items={RECOMMENDATION_TRANSPORT_MODE_ITEMS}
-            value={marketTransportMode}
-            disabled={busy}
-            onChange={onMarketTransportModeChange}
-          />
-
-          {marketRecommendationMode !== "trader" && (
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
-                Базовая точка
-              </div>
-              <div style={{ fontSize: 12, color: "#555", lineHeight: 1.45, marginBottom: 6 }}>
-                {marketRecommendationMode === "sell"
-                  ? "Точка, из которой вы хотите продавать и отправлять груз."
-                  : "Точка, в которую вы хотите купить и привезти груз."}
+              <div className="data-card">
+                <div className="field-label">Быстрый выбор периода</div>
+                <div className="quick-range-grid">
+                  {DECLARATION_QUICK_RANGES.map((item) => (
+                    <button
+                      key={item.days}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onApplyDeclarationQuickRange(item.days)}
+                      className={`quick-range ${activeDeclarationQuickRange === item.days ? "is-active" : ""} ${busy ? "is-disabled" : ""}`}
+                      style={{ padding: "12px 14px" }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {recommendationBasePoint?.name ? (
-                <div
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: 8,
-                    background: "#f3f4f6",
-                    border: "1px solid rgba(0,0,0,0.08)",
-                    fontSize: 13,
-                    marginBottom: 8,
-                  }}
-                >
-                  Выбрано: <b>{recommendationBasePoint.name}</b>
+              <div className="form-grid form-grid--2">
+                <div className="field-group">
+                  <label className="field-label">Дата от</label>
+                  <input className="input-control" type="date" value={declarationDateFrom} disabled={busy} onChange={(e) => onDeclarationDateFromChange(e.target.value)} />
                 </div>
-              ) : (
-                <div style={{ fontSize: 12, color: "#777", marginBottom: 8 }}>
-                  Пока не выбрано.
+                <div className="field-group">
+                  <label className="field-label">Дата до</label>
+                  <input className="input-control" type="date" value={declarationDateTo} disabled={busy} onChange={(e) => onDeclarationDateToChange(e.target.value)} />
                 </div>
-              )}
+              </div>
+
+              <div className="action-row">
+                <button type="button" className="btn btn--primary" onClick={onSearchDeclarations} disabled={!ready || busy}>
+                  Показать декларации
+                </button>
+                <button type="button" className="btn btn--secondary" onClick={onClearDeclarations} disabled={!ready || busy}>
+                  Очистить
+                </button>
+              </div>
 
               <button
-                onClick={onToggleRecommendationBasePointPick}
-                disabled={!ready || busy}
-                style={buttonStyle(pickRecommendationBasePointMode, !ready || busy)}
+                ref={declarationRouteButtonRef}
+                type="button"
+                className={`btn ${pickDeclarationDestinationMode ? "btn--soft" : "btn--secondary"} btn--full`}
+                onClick={onToggleDeclarationDestinationPick}
+                disabled={!ready || busy || !selectedDeclaration}
               >
-                {pickRecommendationBasePointMode
-                  ? "Кликни по станции/порту/элеватору"
-                  : "Указать базовую точку"}
+                {pickDeclarationDestinationMode ? "Кликни по карте, станции, порту или элеватору" : "Построить маршрут от выбранной декларации"}
               </button>
-            </div>
+
+              {selectedDeclaration ? (
+                <div className="selection-card">
+                  <div className="selection-card-line">Выбрана декларация: <b>{selectedDeclaration.declarer || "(без названия)"}</b></div>
+                  <div className="selection-card-line">Объём: <b>{formatTons(selectedDeclaration.volume_tons)}</b></div>
+                  {selectedDeclaration.publication_date && (
+                    <div className="selection-card-line">Дата: <b>{selectedDeclaration.publication_date}</b></div>
+                  )}
+                </div>
+              ) : declarationResult ? (
+                <div className="empty-card">
+                  <div className="empty-card-text">Выбери декларацию на карте или в панели результатов.</div>
+                </div>
+              ) : null}
+            </section>
           )}
 
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
-              Интеграция NotebookLM
-            </div>
+          {isStationRouteMode && (
+            <section className="panel-section">
+              <h3 className="section-title">Маршрут между станциями</h3>
+              <button type="button" className="btn btn--secondary btn--full" onClick={onResetSelection} disabled={!ready || busy}>
+                Сбросить выбор станций
+              </button>
+            </section>
+          )}
 
-            <div
-              style={{
-                padding: "8px 10px",
-                borderRadius: 8,
-                background: notebookLmDirectEnabled ? "#ecfeff" : "#fff7ed",
-                border: "1px solid rgba(0,0,0,0.08)",
-                fontSize: 12,
-                lineHeight: 1.45,
-                color: "#334155",
-                marginBottom: 8,
-              }}
-            >
-              <div>
-                Режим: <b>{notebookLmModeLabel}</b>
+          {isProductSearchMode && (
+            <section className="panel-section">
+              <h3 className="section-title">Поиск продукта</h3>
+              <ModeButtons items={SUPPLY_TRANSPORT_MODE_ITEMS} value={supplyTransportMode} disabled={busy} onChange={onSupplyTransportModeChange} />
+              <div className="action-row">
+                <button type="button" className={`btn ${pickSupplyDestinationMode ? "btn--soft" : "btn--primary"}`} onClick={onToggleDestinationPick} disabled={!ready || busy}>
+                  {pickSupplyDestinationMode ? "Кликни по точке назначения" : "Указать назначение"}
+                </button>
+                <button type="button" className="btn btn--secondary" onClick={onClearSupply} disabled={!ready || busy}>
+                  {isSearchingSupply ? "Отменить поиск" : "Сбросить"}
+                </button>
               </div>
-              {notebookLmStatus?.notebook_id && (
-                <div>
-                  Notebook ID: <b>{notebookLmStatus.notebook_id}</b>
+              {supplyResult?.search_mode && (
+                <div className="summary-pills">
+                  <span className="summary-pill">Режим: {supplyResult.search_mode}</span>
+                  <span className="summary-pill">Вариантов: {supplyResult.options?.length || 0}</span>
                 </div>
               )}
-              {notebookLmStatus?.storage_path && (
-                <div>
-                  Storage: <b>{notebookLmStatus.storage_path}</b>
-                </div>
-              )}
-              {notebookLmDirectEnabled ? (
-                <div style={{ marginTop: 4 }}>
-                  После нажатия «Построить рекомендации» система сама отправит запрос в NotebookLM, заберёт JSON-сигналы и сразу посчитает маршруты и рейтинг направлений.
-                </div>
-              ) : (
-                <div style={{ marginTop: 4 }}>
-                  Прямой запрос к NotebookLM сейчас не настроен. Проверь NOTEBOOKLM_MODE=python, NOTEBOOKLM_NOTEBOOK_ID и storage_state.json на backend.
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
-            <button
-              onClick={onSearchRecommendations}
-              disabled={busy || !notebookLmDirectEnabled}
-              style={buttonStyle(false, busy || !notebookLmDirectEnabled)}
-            >
-              Построить рекомендации
-            </button>
-
-            <button
-              onClick={onClearRecommendations}
-              disabled={busy && !recommendationResult}
-              style={secondaryButtonStyle(false)}
-            >
-              Очистить
-            </button>
-          </div>
-
-          {(notebookLmPrompt || notebookLmRawAnswer || marketSignalsText) && (
-            <details style={{ marginTop: 12 }}>
-              <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
-                Диагностика NotebookLM
-              </summary>
-
-              {notebookLmPrompt && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
-                    Prompt, который был отправлен
-                  </div>
-                  <textarea
-                    readOnly
-                    value={notebookLmPrompt}
-                    style={{ ...textareaStyle, minHeight: 120, background: "#f9fafb" }}
-                  />
-                </div>
-              )}
-
-              {notebookLmRawAnswer && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
-                    Raw answer от NotebookLM
-                  </div>
-                  <textarea
-                    readOnly
-                    value={notebookLmRawAnswer}
-                    style={{ ...textareaStyle, minHeight: 150, background: "#f9fafb" }}
-                  />
-                </div>
-              )}
-
-              {marketSignalsText && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
-                    Распознанные рыночные сигналы
-                  </div>
-                  <textarea
-                    readOnly
-                    value={marketSignalsText}
-                    style={{ ...textareaStyle, minHeight: 160, background: "#f9fafb" }}
-                  />
-                </div>
-              )}
-            </details>
+            </section>
           )}
 
-          {recommendationResult?.results?.length > 0 && (
-            <div style={{ marginTop: 8, fontSize: 12, color: "#555" }}>
-              Найдено рекомендаций: <b>{recommendationResult.results.length}</b>
-            </div>
+          {isRecommendationMode && (
+            <section className="panel-section">
+              <h3 className="section-title">Рыночные рекомендации</h3>
+
+              <div className="control-grid">
+                <div>
+                  <div className="field-label">Сценарий</div>
+                  <ModeButtons items={RECOMMENDATION_MODE_ITEMS} value={marketRecommendationMode} disabled={busy} onChange={onMarketRecommendationModeChange} />
+                </div>
+
+                <div>
+                  <div className="field-label">Режим маршрута</div>
+                  <ModeButtons items={RECOMMENDATION_TRANSPORT_MODE_ITEMS} value={marketTransportMode} disabled={busy} onChange={onMarketTransportModeChange} />
+                </div>
+              </div>
+
+              {marketRecommendationMode !== "trader" && (
+                <div className="selection-card">
+                  <div className="selection-card-line">
+                    {marketRecommendationMode === "sell"
+                      ? "Точка, из которой вы продаёте и отгружаете товар."
+                      : "Точка, в которую вы хотите купить и привезти товар."}
+                  </div>
+                  <div className="selection-card-line">Выбрано: <b>{recommendationBasePoint?.name || "пока не задано"}</b></div>
+                  <button
+                    type="button"
+                    className={`btn ${pickRecommendationBasePointMode ? "btn--soft" : "btn--secondary"} btn--full`}
+                    onClick={onToggleRecommendationBasePointPick}
+                    disabled={!ready || busy}
+                    style={{ marginTop: 6 }}
+                  >
+                    {pickRecommendationBasePointMode ? "Кликни по станции, порту или элеватору" : "Указать базовую точку"}
+                  </button>
+                </div>
+              )}
+
+              <div className="notice-card">
+                <div className="notice-card-title">Интеграция NotebookLM</div>
+                <div className="meta-line">Режим: <b>{notebookLmModeLabel}</b></div>
+                {notebookLmStatus?.notebook_id && <div className="meta-line">Notebook ID: <b>{notebookLmStatus.notebook_id}</b></div>}
+                {notebookLmStatus?.storage_path && <div className="meta-line">Storage: <b>{notebookLmStatus.storage_path}</b></div>}
+                <div className="meta-line">
+                  {notebookLmDirectEnabled
+                    ? "После запуска система сама запрашивает сигналы и сразу считает маршруты."
+                    : "Прямой запрос сейчас не настроен. Нужны NOTEBOOKLM_MODE=python и корректный storage_state.json."}
+                </div>
+              </div>
+
+              <div ref={recommendationActionsRef} className="action-row">
+                <button type="button" className="btn btn--primary" onClick={onSearchRecommendations} disabled={busy || !notebookLmDirectEnabled}>
+                  Построить рекомендации
+                </button>
+                <button type="button" className="btn btn--secondary" onClick={onClearRecommendations} disabled={busy && !recommendationResult}>
+                  Очистить
+                </button>
+              </div>
+
+              {(notebookLmPrompt || notebookLmRawAnswer || marketSignalsText) && (
+                <details className="details-block">
+                  <summary>Диагностика NotebookLM</summary>
+                  {notebookLmPrompt && (
+                    <div className="field-group" style={{ marginTop: 12 }}>
+                      <label className="field-label">Prompt</label>
+                      <textarea className="textarea-control" readOnly value={notebookLmPrompt} />
+                    </div>
+                  )}
+                  {notebookLmRawAnswer && (
+                    <div className="field-group" style={{ marginTop: 12 }}>
+                      <label className="field-label">Raw answer</label>
+                      <textarea className="textarea-control" readOnly value={notebookLmRawAnswer} />
+                    </div>
+                  )}
+                  {marketSignalsText && (
+                    <div className="field-group" style={{ marginTop: 12 }}>
+                      <label className="field-label">Распознанные сигналы</label>
+                      <textarea className="textarea-control" readOnly value={marketSignalsText} />
+                    </div>
+                  )}
+                </details>
+              )}
+            </section>
           )}
         </div>
-      )}
-    </div>
+      </div>
+    </aside>
   );
 }
 
 function ModeButtons({ items, value, disabled, onChange }) {
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      {items.map((item) => {
-        const active = value === item.value;
-        return (
-          <button
-            key={item.value}
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange(item.value)}
-            style={{
-              textAlign: "left",
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: active
-                ? "1px solid rgba(0,0,0,0.9)"
-                : "1px solid rgba(0,0,0,0.15)",
-              background: active ? "#111" : "white",
-              color: active ? "#fff" : "#111",
-              cursor: disabled ? "not-allowed" : "pointer",
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: 2 }}>{item.label}</div>
-            <div style={{ fontSize: 12, lineHeight: 1.4, opacity: active ? 0.9 : 0.75 }}>
-              {item.description}
-            </div>
-          </button>
-        );
-      })}
+    <div className={`mode-grid ${items.length === 1 ? "mode-grid--single" : ""}`}>
+      {items.map((item) => (
+        <ModeCard
+          key={item.value}
+          active={value === item.value}
+          disabled={disabled}
+          title={item.label}
+          description={item.description}
+          onClick={() => onChange(item.value)}
+        />
+      ))}
     </div>
+  );
+}
+
+function ModeCard({ active, disabled, title, description, onClick }) {
+  return (
+    <button
+      type="button"
+      className={`mode-card ${active ? "is-active" : ""} ${disabled ? "is-disabled" : ""}`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <div className="mode-title">{title}</div>
+      <div className="mode-description">{description}</div>
+    </button>
+  );
+}
+
+function ToggleChip({ checked, disabled, label, onChange }) {
+  return (
+    <label className="toggle-chip">
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <span>{label}</span>
+    </label>
   );
 }
 
@@ -685,84 +536,3 @@ function formatTons(value) {
   if (!Number.isFinite(n)) return "0 т";
   return `${Math.round(n * 100) / 100} т`;
 }
-
-function disabledButton(disabled) {
-  return {
-    opacity: disabled ? 0.7 : 1,
-    cursor: disabled ? "not-allowed" : "pointer",
-  };
-}
-
-function quickButtonStyle(active, extra = {}) {
-  return {
-    padding: "8px 12px",
-    borderRadius: 10,
-    border: active ? "1px solid rgba(17,24,39,0.9)" : "1px solid rgba(0,0,0,0.15)",
-    background: active ? "#111" : "white",
-    color: active ? "#fff" : "#111",
-    fontSize: 12,
-    fontWeight: active ? 700 : 500,
-    ...extra,
-  };
-}
-
-function buttonStyle(active, disabled) {
-  return {
-    padding: "8px 10px",
-    borderRadius: 8,
-    border: "1px solid rgba(0,0,0,0.15)",
-    background: active ? "#111" : "white",
-    color: active ? "#fff" : "#111",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.7 : 1,
-  };
-}
-
-function secondaryButtonStyle(disabled) {
-  return {
-    padding: "8px 10px",
-    borderRadius: 8,
-    border: "1px solid rgba(0,0,0,0.15)",
-    background: "white",
-    cursor: disabled ? "not-allowed" : "pointer",
-    opacity: disabled ? 0.75 : 1,
-  };
-}
-
-const selectStyle = {
-  width: "100%",
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: "1px solid rgba(0,0,0,0.15)",
-  marginBottom: 8,
-  background: "white",
-};
-
-const inputStyle = {
-  width: "100%",
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: "1px solid rgba(0,0,0,0.15)",
-  marginBottom: 8,
-  boxSizing: "border-box",
-};
-
-const inputStyleNoMargin = {
-  width: "100%",
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: "1px solid rgba(0,0,0,0.15)",
-  boxSizing: "border-box",
-};
-
-const textareaStyle = {
-  width: "100%",
-  padding: "8px 10px",
-  borderRadius: 8,
-  border: "1px solid rgba(0,0,0,0.15)",
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-  fontSize: 12,
-  lineHeight: 1.5,
-  resize: "vertical",
-  boxSizing: "border-box",
-};
